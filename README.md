@@ -53,7 +53,7 @@ Keep your thoughts organized and private with rich features and an interactive c
 <img width="1913" height="926" alt="Image" src="https://github.com/user-attachments/assets/7392c25f-8cfe-42e5-ac49-1334914c7063" />
 
 ### 6. Profile Page
-![Export PDF](./screenshots/export-pdf.png)
+<img width="1913" height="914" alt="Image" src="https://github.com/user-attachments/assets/e462a072-188a-42c5-8290-3ef21db79d70" />
 
 > 💡 **Tip:** Create a `screenshots` folder in your repository and place all images there. Name them like above.
 
