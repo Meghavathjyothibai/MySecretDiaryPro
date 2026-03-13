@@ -1,0 +1,46 @@
+{
+  "name": "my-secret-diary-pro-client",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "ajv": "^8.0.0",
+    "ajv-keywords": "^5.1.0",
+    "axios": "^1.13.6",
+    "date-fns": "^2.30.0",
+    "framer-motion": "^10.18.0",
+    "jspdf": "^2.5.1",
+    "lucide-react": "^0.279.0",
+    "react": "^18.2.0",
+    "react-calendar": "^4.6.0",
+    "react-dom": "^18.2.0",
+    "react-hot-toast": "^2.4.1",
+    "react-quill": "^2.0.0",
+    "react-router-dom": "^6.30.3",
+    "schema-utils": "^4.3.3"
+  },
+  "scripts": {
+    "start": "cross-env PORT=3000 react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.27",
+    "cross-env": "^7.0.3",
+    "postcss": "^8.5.8",
+    "react-scripts": "5.0.1",
+    "tailwindcss": "^3.4.19"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
