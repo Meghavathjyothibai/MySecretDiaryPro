@@ -29,12 +29,6 @@ Keep your thoughts organized and private with rich features and an interactive c
 
 ---
 
-## 🌐 Live Project
-
-[Visit MySecretDiaryPro](https://your-deployed-project-link.com)
-
----
-
 ## 🖼 Screenshots
 
 ### 1. Login Page
@@ -55,8 +49,63 @@ Keep your thoughts organized and private with rich features and an interactive c
 ### 6. Profile Page
 <img width="1913" height="914" alt="Image" src="https://github.com/user-attachments/assets/e462a072-188a-42c5-8290-3ef21db79d70" />
 
-> 💡 **Tip:** Create a `screenshots` folder in your repository and place all images there. Name them like above.
-
 ---
 
 ## 📂 Project Structure
+
+MySecretDiaryPro
+│
+├── client
+│ ├── src
+│ │ ├── components
+│ │ ├── pages
+│ │ ├── context
+│ │ └── App.js
+│ └── public
+│
+├── server
+│ ├── controllers
+│ ├── models
+│ ├── routes
+│ ├── middleware
+│ └── server.js
+│
+└── README.md
+
+
+---
+
+## ⚙️ Installation
+
+1. Clone the repo:
+```bash
+git clone https://github.com/your-username/MySecretDiaryPro.git
+
+2. Install frontend & backend dependencies:
+
+cd client
+npm install
+
+cd ../server
+npm install
+
+3. Setup .env in server folder:
+
+PORT=5000
+MONGO_URI=your_mongodb_connection_string
+JWT_SECRET=your_secret_key
+CLOUDINARY_NAME=your_cloudinary_name
+CLOUDINARY_KEY=your_key
+CLOUDINARY_SECRET=your_secret
+
+4. Run the app:
+
+cd server
+npm run dev
+
+cd ../client
+npm start
+
+## 🔗 **GitHub Repository**
+
+https://github.com/Meghavathjyothibai/MySecretDiaryPro
