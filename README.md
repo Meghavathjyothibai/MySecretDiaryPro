@@ -41,7 +41,7 @@ Keep your thoughts organized and private with rich features and an interactive c
 <img width="1913" height="919" alt="Image" src="https://github.com/user-attachments/assets/e8cbbbf0-94ca-424c-a2ef-0927f751ffca" />
 
 ### 2. Dashboard / Diary List
-![Dashboard](./screenshots/dashboard.png)
+<img width="1916" height="925" alt="Image" src="https://github.com/user-attachments/assets/60e4b30a-8a04-42a4-bae4-d770b11f3d8d" />
 
 ### 3. Create Entry
 ![Create Entry](./screenshots/create-entry.png)
