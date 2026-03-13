@@ -106,6 +106,6 @@ npm run dev
 cd ../client
 npm start
 
-## 🔗 **GitHub Repository**
+## 🔗 GitHub Repository
 
 https://github.com/Meghavathjyothibai/MySecretDiaryPro
