@@ -38,7 +38,7 @@ Keep your thoughts organized and private with rich features and an interactive c
 ## 🖼 Screenshots
 
 ### 1. Login Page
-![Login](./screenshots/login.png)
+<img width="1913" height="919" alt="Image" src="https://github.com/user-attachments/assets/e8cbbbf0-94ca-424c-a2ef-0927f751ffca" />
 
 ### 2. Dashboard / Diary List
 ![Dashboard](./screenshots/dashboard.png)
