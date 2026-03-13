@@ -47,7 +47,7 @@ Keep your thoughts organized and private with rich features and an interactive c
 <img width="1916" height="918" alt="Image" src="https://github.com/user-attachments/assets/50b19652-bc10-4307-a0f5-af5a6d4e299c" />
 
 ### 4. Calendar View
-![Calendar](./screenshots/calendar.png)
+<img width="1919" height="920" alt="Image" src="https://github.com/user-attachments/assets/2a966a8f-3659-4141-abe6-fbbb8e6e422e" />
 
 ### 5. Voice Note & Image Attachment
 ![Voice & Image](./screenshots/voice-image.png)
