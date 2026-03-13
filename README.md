@@ -49,10 +49,10 @@ Keep your thoughts organized and private with rich features and an interactive c
 ### 4. Calendar View
 <img width="1919" height="920" alt="Image" src="https://github.com/user-attachments/assets/2a966a8f-3659-4141-abe6-fbbb8e6e422e" />
 
-### 5. Voice Note & Image Attachment
-![Voice & Image](./screenshots/voice-image.png)
+### Search Entry
+<img width="1913" height="926" alt="Image" src="https://github.com/user-attachments/assets/7392c25f-8cfe-42e5-ac49-1334914c7063" />
 
-### 6. Export PDF
+### 6. Profile Page
 ![Export PDF](./screenshots/export-pdf.png)
 
 > 💡 **Tip:** Create a `screenshots` folder in your repository and place all images there. Name them like above.
