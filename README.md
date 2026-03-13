@@ -44,7 +44,7 @@ Keep your thoughts organized and private with rich features and an interactive c
 <img width="1916" height="925" alt="Image" src="https://github.com/user-attachments/assets/60e4b30a-8a04-42a4-bae4-d770b11f3d8d" />
 
 ### 3. Create Entry
-![Create Entry](./screenshots/create-entry.png)
+<img width="1916" height="918" alt="Image" src="https://github.com/user-attachments/assets/50b19652-bc10-4307-a0f5-af5a6d4e299c" />
 
 ### 4. Calendar View
 ![Calendar](./screenshots/calendar.png)
