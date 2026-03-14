@@ -23,11 +23,10 @@ const generateOTP = () => {
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-  host: 'smtp.sendgrid.net',
-  port: 587,
+  service: 'gmail',
   auth: {
-    user: 'apikey',                 // literally the string "apikey"
-    pass: process.env.SENDGRID_API_KEY
+    user: process.env.EMAIL_USER, // your Gmail
+    pass: process.env.EMAIL_PASS  // your 16-character App Password
   }
 });
 // Send OTP email
