@@ -66,7 +66,7 @@ const EditEntry = () => {
     if (passedEntry?.images) {
       const formattedImages = passedEntry.images.map((img, index) => ({
         id: `existing-img-${index}-${Date.now()}`,
-        url: img.startsWith('http') ? img : `http://localhost:5000${img}`,
+        url: img.startsWith('http') ? img : `https://mysecretdiarypro.onrender.com${img}`,
         isTemp: false
       }));
       setImages(formattedImages);
@@ -75,7 +75,7 @@ const EditEntry = () => {
     if (passedEntry?.voiceNotes) {
       const formattedVoice = passedEntry.voiceNotes.map((note, index) => ({
         id: `existing-voice-${index}-${Date.now()}`,
-        url: note.startsWith('http') ? note : `http://localhost:5000${note}`,
+        url: note.startsWith('http') ? note : `https://mysecretdiarypro.onrender.com${note}`,
         isUploading: false
       }));
       setVoiceNotes(formattedVoice);
@@ -116,7 +116,7 @@ const EditEntry = () => {
       if (entryData.images) {
         const formattedImages = entryData.images.map((img, index) => ({
           id: `img-${index}-${Date.now()}`,
-          url: img.startsWith('http') ? img : `http://localhost:5000${img}`,
+          url: img.startsWith('http') ? img : `https://mysecretdiarypro.onrender.com${img}`,
           isTemp: false
         }));
         setImages(formattedImages);
@@ -126,7 +126,7 @@ const EditEntry = () => {
       if (entryData.voiceNotes) {
         const formattedVoice = entryData.voiceNotes.map((note, index) => ({
           id: `voice-${index}-${Date.now()}`,
-          url: note.startsWith('http') ? note : `http://localhost:5000${note}`,
+url: note.startsWith('http') ? note : `https://mysecretdiarypro.onrender.com${note}`,
           isUploading: false
         }));
         setVoiceNotes(formattedVoice);
@@ -352,8 +352,8 @@ const EditEntry = () => {
 
     try {
       // Extract just the URLs for saving
-      const saveImages = images.map((img) => img.url.replace('http://localhost:5000', ''));
-      const saveVoiceNotes = voiceNotes.map((v) => v.url.replace('http://localhost:5000', ''));
+      const saveImages = images.map((img) => img.url.replace('https://mysecretdiarypro.onrender.com', ''))
+      const saveVoiceNotes = voiceNotes.map((v) => v.url.replace('https://mysecretdiarypro.onrender.com', ''));
       
       const response = await api.put(`/diary/${id}`, {
         title: title.trim(),

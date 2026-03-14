@@ -379,7 +379,7 @@ const ViewEntry = () => {
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {entry.images.map((image, index) => {
-                const imageUrl = image.startsWith('http') ? image : `http://localhost:5000${image}`;
+                const imageUrl = image.startsWith('http') ? image : `https://mysecretdiarypro.onrender.com${image}`;
                 return (
                   <img
                     key={index}
@@ -400,7 +400,7 @@ const ViewEntry = () => {
             </h3>
             <div className="space-y-2">
               {entry.voiceNotes.map((note, index) => {
-                const audioUrl = note.startsWith('http') ? note : `http://localhost:5000${note}`;
+                const audioUrl = note.startsWith('http') ? note: `https://mysecretdiarypro.onrender.com${note}`;
                 return (
                   <audio
                     key={index}

@@ -13,7 +13,7 @@ export const AuthProvider = ({ children }) => {
 
   // Create axios instance
   const api = axios.create({
-    baseURL: 'http://localhost:5000/api',
+  baseURL: 'https://mysecretdiarypro.onrender.com/api',
     timeout: 10000,
   });
 
@@ -78,7 +78,7 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (username, email, password) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/register', {
+      const response = await axios.post('https://mysecretdiarypro.onrender.com/api/auth/register', {
         username,
         email,
         password
@@ -103,7 +103,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', {
+      const response = await axios.post('https://mysecretdiarypro.onrender.com/api/auth/login', {
         email,
         password
       });
