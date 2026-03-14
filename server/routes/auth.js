@@ -19,15 +19,21 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Configure email transporter
-const nodemailer = require('nodemailer');
-
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER, // your Gmail
-    pass: process.env.EMAIL_PASS  // your 16-character App Password
-  }
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+  tls: {
+    rejectUnauthorized: false
+  },
+  // Force IPv4 to avoid Render IPv6 issues
+  connectionTimeout: 10000,
+  socketTimeout: 10000,
+  debug: true,
+  logger: true,
+  family: 4
 });
 // Send OTP email
 const sendOTPEmail = async (email, otp) => {
