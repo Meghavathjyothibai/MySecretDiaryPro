@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import ReactQuill from 'react-quill';
@@ -11,7 +11,7 @@ import 'react-quill/dist/quill.snow.css';
 const moods = [
   { value: 'happy', label: 'Happy', icon: '😊' },
   { value: 'sad', label: 'Sad', icon: '😢' },
-  { value: 'excited', label: 'Excited', icon: '🤩' },
+  { value: 'excited', label: 'Excieted', icon: '🤩' },
   { value: 'calm', label: 'Calm', icon: '😌' },
   { value: 'angry', label: 'Angry', icon: '😠' },
   { value: 'anxious', label: 'Anxious', icon: '😰' },
@@ -33,6 +33,24 @@ const modules = {
 const CreateEntry = () => {
   const navigate = useNavigate();
   const { token } = useAuth();
+
+  // Check token on component mount
+  useEffect(() => {
+    if (!token) {
+      toast.error('Please login first');
+      navigate('/login');
+      return;
+    }
+    
+    // Set token in axios defaults
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    console.log('✅ Token set in axios headers');
+    
+    // Cleanup
+    return () => {
+      delete axios.defaults.headers.common['Authorization'];
+    };
+  }, [token, navigate]);
 
   // Form states
   const [title, setTitle] = useState('');
@@ -57,9 +75,6 @@ const CreateEntry = () => {
   const audioChunksRef = useRef([]);
   const fileInputRef = useRef(null);
   const timerRef = useRef(null);
-
-  // Configure axios with token
-  axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -94,14 +109,21 @@ const CreateEntry = () => {
         ]);
 
         const formData = new FormData();
-        // FIX: Changed from 'audio' to 'voice' to match backend
         formData.append('voice', audioBlob, `voice-${Date.now()}.webm`);
 
         try {
           setUploadingVoice(true);
-          const response = await axios.post('http://localhost:5000/api/upload/voice', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          });
+          // Explicitly add token to upload request
+          const response = await axios.post(
+            'https://mysecretdiarypro.onrender.com/api/upload/voice', 
+            formData, 
+            {
+              headers: { 
+                'Content-Type': 'multipart/form-data',
+                'Authorization': `Bearer ${token}`
+              }
+            }
+          );
 
           // Replace blob URL with real URL
           setVoiceNotes((prev) =>
@@ -118,7 +140,7 @@ const CreateEntry = () => {
           // Remove the temporary recording
           setVoiceNotes((prev) => prev.filter((item) => item.id !== tempId));
           URL.revokeObjectURL(blobUrl);
-          toast.error('Failed to upload voice note');
+          toast.error(error.response?.data?.error || 'Failed to upload voice note');
         } finally {
           setUploadingVoice(false);
           if (timerRef.current) {
@@ -187,9 +209,17 @@ const CreateEntry = () => {
 
     try {
       setUploadingImage(true);
-      const response = await axios.post('http://localhost:5000/api/upload/image', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      // Explicitly add token to upload request
+      const response = await axios.post(
+        'https://mysecretdiarypro.onrender.com/api/upload/image', 
+        formData, 
+        {
+          headers: { 
+            'Content-Type': 'multipart/form-data',
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      );
 
       // Replace preview with real URL
       setImages((prev) =>
@@ -206,7 +236,7 @@ const CreateEntry = () => {
       // Remove preview on error
       setImages((prev) => prev.filter((item) => item.id !== tempId));
       URL.revokeObjectURL(previewUrl);
-      toast.error('Failed to upload image');
+      toast.error(error.response?.data?.error || 'Failed to upload image');
     } finally {
       setUploadingImage(false);
       if (fileInputRef.current) {
@@ -246,6 +276,12 @@ const CreateEntry = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!token) {
+      toast.error('Please login again');
+      navigate('/login');
+      return;
+    }
 
     if (!title.trim()) {
       toast.error('Please enter a title');
@@ -295,7 +331,16 @@ const CreateEntry = () => {
         password: lockEntry ? entryPassword : null
       };
 
-      await axios.post('http://localhost:5000/api/diary', entryData);
+      // Explicitly add token to create entry request
+      await axios.post(
+        'https://mysecretdiarypro.onrender.com/api/diary', 
+        entryData,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      );
       
       toast.success('Entry created successfully!');
       navigate('/');
@@ -303,7 +348,7 @@ const CreateEntry = () => {
       console.error('Create error:', error);
       
       if (error.response?.status === 401) {
-        toast.error('Please login again');
+        toast.error('Session expired. Please login again');
         navigate('/login');
       } else {
         toast.error(error.response?.data?.error || 'Failed to create entry');
