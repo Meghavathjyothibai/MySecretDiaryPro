@@ -2,28 +2,38 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { sendPasswordResetEmail } = require('../emailService');
+const { sendPasswordResetEmail } = require('../services/emailService');
 
 // Store OTPs temporarily (in production, use Redis or database)
 const otpStore = new Map();
 
-// Generate JWT Token
+// Generate JWT Token - MUST match middleware expectations
 const generateToken = (userId) => {
-  return jwt.sign({ userId }, process.env.JWT_SECRET || 'your-secret-key', {
-    expiresIn: '7d'
-  });
+  return jwt.sign(
+    { userId },  // This creates { userId: user._id }
+    process.env.JWT_SECRET || 'your-secret-key',
+    { expiresIn: '7d' }
+  );
 };
 
-// Generate random OTP
+// Generate random 6-digit OTP
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Middleware to verify token
+// Middleware to verify token (reusable for protected routes)
 const authMiddleware = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
+    // Get token from multiple sources
+    let token = req.header('x-auth-token');
     
+    if (!token) {
+      const authHeader = req.header('Authorization');
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.replace('Bearer ', '');
+      }
+    }
+
     if (!token) {
       return res.status(401).json({ 
         success: false, 
@@ -31,7 +41,10 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
+    // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    
+    // Find user
     const user = await User.findById(decoded.userId);
     
     if (!user) {
@@ -41,11 +54,21 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
+    // Attach user info to request
     req.userId = user._id;
     req.user = user;
+    
     next();
   } catch (error) {
-    console.error('Auth middleware error:', error);
+    console.error('❌ Auth middleware error:', error.message);
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Token expired' 
+      });
+    }
+    
     res.status(401).json({ 
       success: false, 
       message: 'Invalid or expired token' 
@@ -60,7 +83,7 @@ router.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     
-    console.log('📝 Registration attempt:', { username, email, passwordLength: password?.length });
+    console.log('📝 Registration attempt:', { username, email });
 
     // Validation
     if (!username || !email || !password) {
@@ -70,7 +93,7 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Check if username meets minimum length
+    // Check username length
     if (username.length < 3) {
       return res.status(400).json({
         success: false,
@@ -78,11 +101,20 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Check if password meets minimum length
+    // Check password length
     if (password.length < 6) {
       return res.status(400).json({
         success: false,
         message: 'Password must be at least 6 characters long'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
       });
     }
 
@@ -113,6 +145,7 @@ router.post('/register', async (req, res) => {
     // Generate token
     const token = generateToken(user._id);
 
+    // Return user data (without password)
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
@@ -121,7 +154,7 @@ router.post('/register', async (req, res) => {
         id: user._id,
         username: user.username,
         email: user.email,
-        name: user.name || username,
+        name: user.name || user.username,
         bio: user.bio || '',
         location: user.location || '',
         website: user.website || '',
@@ -132,11 +165,12 @@ router.post('/register', async (req, res) => {
   } catch (error) {
     console.error('❌ Register error:', error);
     
-    if (error.name === 'MongoServerError' && error.code === 11000) {
+    // Handle duplicate key error
+    if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
         success: false, 
-        message: `${field} already exists. Please use a different ${field}.` 
+        message: `${field} already exists` 
       });
     }
     
@@ -154,6 +188,9 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    console.log('🔐 Login attempt for email:', email);
+
+    // Validation
     if (!email || !password) {
       return res.status(400).json({ 
         success: false, 
@@ -164,6 +201,7 @@ router.post('/login', async (req, res) => {
     // Find user by email
     const user = await User.findOne({ email });
     if (!user) {
+      console.log('❌ User not found:', email);
       return res.status(401).json({ 
         success: false, 
         message: 'Invalid email or password' 
@@ -173,15 +211,19 @@ router.post('/login', async (req, res) => {
     // Check password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
+      console.log('❌ Invalid password for user:', email);
       return res.status(401).json({ 
         success: false, 
         message: 'Invalid email or password' 
       });
     }
 
+    console.log('✅ Login successful for user:', user.username);
+
     // Generate token
     const token = generateToken(user._id);
 
+    // Return user data
     res.json({
       success: true,
       message: 'Login successful',
@@ -223,7 +265,7 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
-    // Basic email validation
+    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({
@@ -254,7 +296,8 @@ router.post('/forgot-password', async (req, res) => {
       otp, 
       expiresAt, 
       userId: user._id,
-      attempts: 0 
+      attempts: 0,
+      verified: false
     });
 
     console.log(`🔑 OTP generated for ${email}`);
@@ -307,6 +350,7 @@ router.post('/verify-otp', async (req, res) => {
     const storedData = otpStore.get(email);
     
     if (!storedData) {
+      console.log('❌ No OTP found for:', email);
       return res.status(400).json({ 
         success: false, 
         message: 'OTP expired or not found' 
@@ -315,6 +359,7 @@ router.post('/verify-otp', async (req, res) => {
 
     if (storedData.expiresAt < Date.now()) {
       otpStore.delete(email);
+      console.log('❌ OTP expired for:', email);
       return res.status(400).json({ 
         success: false, 
         message: 'OTP has expired' 
@@ -322,6 +367,10 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     if (storedData.otp !== otp) {
+      storedData.attempts += 1;
+      otpStore.set(email, storedData);
+      
+      console.log('❌ Invalid OTP for:', email);
       return res.status(400).json({ 
         success: false, 
         message: 'Invalid OTP' 
@@ -374,7 +423,14 @@ router.post('/reset-password', async (req, res) => {
     // Verify OTP again
     const storedData = otpStore.get(email);
     
-    if (!storedData || storedData.otp !== otp || storedData.expiresAt < Date.now()) {
+    if (!storedData || !storedData.verified) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please verify OTP first' 
+      });
+    }
+
+    if (storedData.otp !== otp || storedData.expiresAt < Date.now()) {
       return res.status(400).json({ 
         success: false, 
         message: 'Invalid or expired OTP' 
@@ -421,6 +477,13 @@ router.get('/verify', authMiddleware, async (req, res) => {
     console.log('🔍 Verifying token for user:', req.userId);
     
     const user = await User.findById(req.userId).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
     
     res.json({
       success: true,
@@ -622,6 +685,17 @@ router.post('/upload-avatar', authMiddleware, async (req, res) => {
       message: 'Server error' 
     });
   }
+});
+
+// @route   GET /api/auth/logout
+// @desc    Logout user (client-side only, but included for completeness)
+// @access  Private
+router.post('/logout', authMiddleware, (req, res) => {
+  // JWT is stateless, so logout is handled client-side by removing token
+  res.json({
+    success: true,
+    message: 'Logged out successfully'
+  });
 });
 
 module.exports = router;

@@ -8,7 +8,7 @@ const sendPasswordResetEmail = async (email, otp) => {
     console.log(`📧 Attempting to send OTP email to ${email} via Resend...`);
     
     const { data, error } = await resend.emails.send({
-      from: 'My Secret Diary <onboarding@resend.dev>', // You can change this after verifying domain
+      from: 'My Secret Diary <onboarding@resend.dev>',
       to: [email],
       subject: '🔐 Password Reset OTP - My Secret Diary',
       html: `
