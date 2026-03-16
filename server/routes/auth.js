@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { sendPasswordResetEmail } = require('../services/emailService');
+const axios = require('axios'); // Add this for EmailJS
 
 // Store OTPs temporarily (in production, use Redis or database)
 const otpStore = new Map();
@@ -20,6 +20,72 @@ const generateToken = (userId) => {
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
+
+// ==================== EMAILJS FUNCTION ====================
+const sendOTPEmail = async (email, username, otp) => {
+  try {
+    console.log('📧 Sending OTP via EmailJS to:', email);
+    console.log('Service ID:', process.env.EMAILJS_SERVICE_ID);
+    console.log('Template ID:', process.env.EMAILJS_TEMPLATE_ID);
+
+    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', {
+      service_id: process.env.EMAILJS_SERVICE_ID,
+      template_id: process.env.EMAILJS_TEMPLATE_ID,
+      user_id: process.env.EMAILJS_PUBLIC_KEY,
+      accessToken: process.env.EMAILJS_PRIVATE_KEY,
+      template_params: {
+        to_email: email,
+        to_name: username || 'User',
+        otp: otp,
+        reply_to: 'noreply@mysecretdiary.com'
+      }
+    });
+
+    console.log('✅ EmailJS Response:', response.data);
+    return { success: true, data: response.data };
+  } catch (error) {
+    console.error('❌ EmailJS Error:', error.response?.data || error.message);
+    return { 
+      success: false, 
+      error: error.response?.data || error.message 
+    };
+  }
+};
+
+// ==================== TEST EMAILJS ROUTE ====================
+router.post('/test-emailjs', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+
+    const testOTP = '123456';
+    const result = await sendOTPEmail(email, 'Test User', testOTP);
+    
+    if (result.success) {
+      res.json({ 
+        success: true, 
+        message: '✅ Test email sent! Check your inbox.' 
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to send test email',
+        error: result.error 
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
 
 // Middleware to verify token (reusable for protected routes)
 const authMiddleware = async (req, res, next) => {
@@ -250,7 +316,7 @@ router.post('/login', async (req, res) => {
 });
 
 // @route   POST /api/auth/forgot-password
-// @desc    Send OTP to email
+// @desc    Send OTP to email using EmailJS
 // @access  Public
 router.post('/forgot-password', async (req, res) => {
   try {
@@ -300,25 +366,27 @@ router.post('/forgot-password', async (req, res) => {
       verified: false
     });
 
-    console.log(`🔑 OTP generated for ${email}`);
+    console.log(`🔑 OTP generated for ${email}: ${otp}`);
 
-    // Send email via Resend
-    try {
-      await sendPasswordResetEmail(email, otp);
+    // ===== SEND EMAIL VIA EMAILJS =====
+    const emailResult = await sendOTPEmail(email, user.username, otp);
+    
+    if (emailResult.success) {
       console.log(`✅ OTP email sent successfully to ${email}`);
       
       res.json({
         success: true,
         message: 'OTP sent successfully to your email',
-        // Only show OTP in development
+        // Only show OTP in development (optional)
         devOtp: process.env.NODE_ENV === 'development' ? otp : undefined
       });
-    } catch (emailError) {
-      console.error('❌ Failed to send OTP email:', emailError);
+    } else {
+      console.error('❌ Failed to send OTP email:', emailResult.error);
       
-      res.status(500).json({
-        success: false,
-        message: 'Failed to send OTP email. Please try again.'
+      // Still return success for security, but log the error
+      res.json({
+        success: true,
+        message: 'If your email is registered, you will receive an OTP'
       });
     }
 
@@ -357,6 +425,7 @@ router.post('/verify-otp', async (req, res) => {
       });
     }
 
+    // Check expiry
     if (storedData.expiresAt < Date.now()) {
       otpStore.delete(email);
       console.log('❌ OTP expired for:', email);
@@ -366,6 +435,7 @@ router.post('/verify-otp', async (req, res) => {
       });
     }
 
+    // Check OTP
     if (storedData.otp !== otp) {
       storedData.attempts += 1;
       otpStore.set(email, storedData);
