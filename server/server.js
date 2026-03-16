@@ -1,16 +1,34 @@
 // LOAD ENVIRONMENT VARIABLES - Smart loading (MUST BE FIRST!)
 const fs = require('fs');
 const path = require('path');
+const dotenv = require('dotenv');
+
+// Clear console for better visibility
+console.clear();
+console.log('🔍 Loading environment variables...\n');
 
 // Check which env file exists and load it
 if (fs.existsSync(path.join(__dirname, '.env.local'))) {
   console.log('📁 Loading environment from .env.local');
-  require('dotenv').config({ path: '.env.local' });
+  dotenv.config({ path: '.env.local' });
 } else if (fs.existsSync(path.join(__dirname, '.env'))) {
   console.log('📁 Loading environment from .env');
-  require('dotenv').config();
+  dotenv.config();
 } else {
   console.log('⚠️ No .env or .env.local file found! Using process environment variables only.');
+}
+
+// Verify EmailJS keys are loaded (DEBUGGING)
+console.log('\n📧 EmailJS Configuration Status:');
+console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ ' + process.env.EMAILJS_SERVICE_ID : '❌ Missing'}`);
+console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ ' + process.env.EMAILJS_TEMPLATE_ID : '❌ Missing'}`);
+console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ ' + process.env.EMAILJS_PUBLIC_KEY.substring(0, 10) + '...' : '❌ Missing'}`);
+console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Present' : '❌ Missing'}`);
+
+// Stop if EmailJS keys are missing
+if (!process.env.EMAILJS_SERVICE_ID || !process.env.EMAILJS_TEMPLATE_ID || !process.env.EMAILJS_PUBLIC_KEY) {
+  console.error('\n❌ CRITICAL: EmailJS keys are missing! Forgot password will NOT work.');
+  console.error('   Please make sure .env.local exists with your actual EmailJS keys.');
 }
 
 const express = require('express');
@@ -20,6 +38,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
+const axios = require('axios'); // Add axios for EmailJS testing
 
 const app = express();
 
@@ -32,8 +51,8 @@ app.get('/api/test-env', (req, res) => {
       : fs.existsSync(path.join(__dirname, '.env')) 
         ? '.env' 
         : 'No env file (using system env)',
-    emailjs_service_id: process.env.EMAILJS_SERVICE_ID ? '✅ Set' : '❌ Missing',
-    emailjs_template_id: process.env.EMAILJS_TEMPLATE_ID ? '✅ Set' : '❌ Missing',
+    emailjs_service_id: process.env.EMAILJS_SERVICE_ID || '❌ Missing',
+    emailjs_template_id: process.env.EMAILJS_TEMPLATE_ID || '❌ Missing',
     emailjs_public_key: process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing',
     emailjs_private_key: process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing',
     mongodb_uri: process.env.MONGODB_URI ? '✅ Set' : '❌ Missing',
@@ -41,6 +60,144 @@ app.get('/api/test-env', (req, res) => {
     cloudinary: process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing',
     node_env: process.env.NODE_ENV || 'development'
   });
+});
+
+// ===== TEST EMAILJS ROUTE (FILE 2 - ADDED) =====
+app.get('/api/test-email', async (req, res) => {
+  try {
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required. Use ?email=your@email.com' 
+      });
+    }
+
+    console.log('\n🧪 Testing EmailJS with email:', email);
+    
+    // Get environment variables
+    const serviceId = process.env.EMAILJS_SERVICE_ID;
+    const templateId = process.env.EMAILJS_TEMPLATE_ID;
+    const publicKey = process.env.EMAILJS_PUBLIC_KEY;
+    const privateKey = process.env.EMAILJS_PRIVATE_KEY;
+
+    // Validate keys
+    if (!serviceId || !templateId || !publicKey) {
+      return res.status(500).json({
+        success: false,
+        message: 'EmailJS configuration missing',
+        details: {
+          serviceId: !!serviceId,
+          templateId: !!templateId,
+          publicKey: !!publicKey
+        }
+      });
+    }
+
+    // Prepare payload
+    const payload = {
+      service_id: serviceId,
+      template_id: templateId,
+      user_id: publicKey,
+      accessToken: privateKey,
+      template_params: {
+        to_email: email,
+        to_name: 'Test User',
+        otp: '123456',
+        reply_to: 'noreply@mysecretdiary.com'
+      }
+    };
+
+    console.log('📤 Sending payload to EmailJS...');
+
+    // Send with increased timeout
+    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'http://localhost:3000'
+      }
+    });
+
+    console.log('✅ EmailJS Response:', response.data);
+    res.json({ 
+      success: true, 
+      message: 'Test email sent successfully!',
+      data: response.data 
+    });
+  } catch (error) {
+    console.error('❌ EmailJS Test Error:');
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error('Data:', error.response.data);
+      res.status(500).json({ 
+        success: false, 
+        error: error.response.data,
+        status: error.response.status
+      });
+    } else if (error.request) {
+      console.error('No response received');
+      res.status(500).json({ 
+        success: false, 
+        error: 'No response from EmailJS server'
+      });
+    } else {
+      console.error('Error:', error.message);
+      res.status(500).json({ 
+        success: false, 
+        error: error.message
+      });
+    }
+  }
+});
+
+// ===== TEST EMAILJS POST ROUTE (Alternative) =====
+app.post('/api/test-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+
+    console.log('\n🧪 Testing EmailJS POST with email:', email);
+    
+    const payload = {
+      service_id: process.env.EMAILJS_SERVICE_ID,
+      template_id: process.env.EMAILJS_TEMPLATE_ID,
+      user_id: process.env.EMAILJS_PUBLIC_KEY,
+      accessToken: process.env.EMAILJS_PRIVATE_KEY,
+      template_params: {
+        to_email: email,
+        to_name: 'Test User',
+        otp: '123456',
+        reply_to: 'noreply@mysecretdiary.com'
+      }
+    };
+
+    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'http://localhost:3000'
+      }
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Test email sent successfully!',
+      data: response.data 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.response?.data || error.message 
+    });
+  }
 });
 
 // Middleware
@@ -65,7 +222,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-console.log('✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET');
+console.log('\n✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET');
 
 // ================= MULTER CONFIG (Temporary storage) =================
 const storage = multer.diskStorage({
@@ -574,17 +731,24 @@ const server = app.listen(PORT, () => {
   console.log(`   - Diary: http://localhost:${PORT}/api/diary`);
   console.log(`   - Upload Image: http://localhost:${PORT}/api/upload/image`);
   console.log(`   - Upload Voice: http://localhost:${PORT}/api/upload/voice`);
+  console.log(`   - Test Env: http://localhost:${PORT}/api/test-env`);
+  console.log(`   - Test Email (GET): http://localhost:${PORT}/api/test-email?email=your@email.com`);
+  console.log(`   - Test Email (POST): http://localhost:${PORT}/api/test-email`);
   console.log(`☁️  Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME ? '✅ Configured' : '❌ Missing'}`);
   console.log(`📧 EmailJS Status:`);
-  console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ Set' : '❌ Missing'}`);
+  console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ ' + process.env.EMAILJS_SERVICE_ID : '❌ Missing'}`);
+  console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ ' + process.env.EMAILJS_TEMPLATE_ID : '❌ Missing'}`);
   console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing'}`);
   console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing'}`);
-  console.log(`📌 Test Environment: http://localhost:${PORT}/api/test-env`);
   
-  if (!process.env.EMAILJS_SERVICE_ID || !process.env.EMAILJS_TEMPLATE_ID || !process.env.EMAILJS_PUBLIC_KEY) {
+  if (process.env.EMAILJS_SERVICE_ID && process.env.EMAILJS_TEMPLATE_ID && process.env.EMAILJS_PUBLIC_KEY) {
+    console.log(`\n✅ EmailJS is ready! Test it now:`);
+    console.log(`   GET:  http://localhost:${PORT}/api/test-email?email=your@email.com`);
+    console.log(`   POST: http://localhost:${PORT}/api/test-email (with JSON body {"email":"your@email.com"})`);
+  } else {
     console.log(`\n⚠️  Warning: EmailJS is not fully configured. Password reset emails will not work!`);
     console.log(`   Please add EmailJS keys to your ${envFile} file.`);
+    console.log(`   Required keys: EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY`);
   }
   
   if (!process.env.MONGODB_URI) {

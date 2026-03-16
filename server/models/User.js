@@ -21,7 +21,20 @@ const userSchema = new mongoose.Schema({
     required: true,
     minlength: 6
   },
-  // Additional profile fields
+  // OTP fields for password reset
+  resetOTP: {
+    type: String,
+    default: null
+  },
+  resetOTPExpire: {
+    type: Date,
+    default: null
+  },
+  resetAttempts: {
+    type: Number,
+    default: 0
+  },
+  // Profile fields
   name: {
     type: String,
     trim: true
@@ -64,6 +77,11 @@ userSchema.pre('save', async function(next) {
 // Method to compare password
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
+};
+
+// Method to check if OTP is valid
+userSchema.methods.isOTPValid = function(otp) {
+  return this.resetOTP === otp && this.resetOTPExpire > Date.now();
 };
 
 const User = mongoose.model('User', userSchema);
