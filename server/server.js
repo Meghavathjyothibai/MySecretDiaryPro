@@ -1,16 +1,47 @@
-require('dotenv').config();
+// LOAD ENVIRONMENT VARIABLES - Smart loading (MUST BE FIRST!)
+const fs = require('fs');
+const path = require('path');
+
+// Check which env file exists and load it
+if (fs.existsSync(path.join(__dirname, '.env.local'))) {
+  console.log('📁 Loading environment from .env.local');
+  require('dotenv').config({ path: '.env.local' });
+} else if (fs.existsSync(path.join(__dirname, '.env'))) {
+  console.log('📁 Loading environment from .env');
+  require('dotenv').config();
+} else {
+  console.log('⚠️ No .env or .env.local file found! Using process environment variables only.');
+}
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const multer = require('multer');
-const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
 
 const app = express();
+
+// ===== TEST ENV ROUTE =====
+app.get('/api/test-env', (req, res) => {
+  res.json({
+    message: 'Environment variables status',
+    using_file: fs.existsSync(path.join(__dirname, '.env.local')) 
+      ? '.env.local' 
+      : fs.existsSync(path.join(__dirname, '.env')) 
+        ? '.env' 
+        : 'No env file (using system env)',
+    emailjs_service_id: process.env.EMAILJS_SERVICE_ID ? '✅ Set' : '❌ Missing',
+    emailjs_template_id: process.env.EMAILJS_TEMPLATE_ID ? '✅ Set' : '❌ Missing',
+    emailjs_public_key: process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing',
+    emailjs_private_key: process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing',
+    mongodb_uri: process.env.MONGODB_URI ? '✅ Set' : '❌ Missing',
+    jwt_secret: process.env.JWT_SECRET ? '✅ Set' : '❌ Missing',
+    cloudinary: process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing',
+    node_env: process.env.NODE_ENV || 'development'
+  });
+});
 
 // Middleware
 app.use(cors({
@@ -34,7 +65,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-console.log('✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME);
+console.log('✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET');
 
 // ================= MULTER CONFIG (Temporary storage) =================
 const storage = multer.diskStorage({
@@ -59,10 +90,12 @@ const upload = multer({
 const connectDB = async () => {
   try {
     if (!process.env.MONGODB_URI) {
-      console.error('❌ MONGODB_URI is not defined in .env file');
+      console.error('❌ MONGODB_URI is not defined in environment variables');
+      console.error('📌 Please check your .env.local or Render environment variables');
       process.exit(1);
     }
 
+    console.log('📡 Connecting to MongoDB...');
     const conn = await mongoose.connect(process.env.MONGODB_URI);
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
@@ -359,7 +392,7 @@ app.post('/api/diary', authMiddleware, async (req, res) => {
   }
 });
 
-// UPDATE entry - FIXED: Allows editing locked entries with password
+// UPDATE entry
 app.put('/api/diary/:id', authMiddleware, async (req, res) => {
   try {
     const { title, content, mood, tags, images, voiceNotes, password } = req.body;
@@ -375,19 +408,15 @@ app.put('/api/diary/:id', authMiddleware, async (req, res) => {
     
     // Check if entry is locked and handle password
     if (entry.isLocked) {
-      // If no password provided, check if this is an unlock attempt
       if (!password) {
         return res.status(403).json({ error: 'Password required to edit locked entry' });
       }
 
-      // Verify the password
       const isMatch = await bcrypt.compare(password, entry.password);
       
       if (!isMatch) {
         return res.status(401).json({ error: 'Wrong password' });
       }
-      
-      // If password is correct, we can edit but keep it locked
     }
     
     // Update entry
@@ -531,14 +560,36 @@ app.get('/api/health', (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 const server = app.listen(PORT, () => {
+  const envFile = fs.existsSync(path.join(__dirname, '.env.local')) 
+    ? '.env.local' 
+    : fs.existsSync(path.join(__dirname, '.env')) 
+      ? '.env' 
+      : 'System Environment Variables';
+  
   console.log(`\n✅ Server started on port ${PORT}`);
+  console.log(`📁 Environment file: ${envFile}`);
   console.log(`🌐 http://localhost:${PORT}`);
   console.log(`📝 API Endpoints:`);
   console.log(`   - Auth: http://localhost:${PORT}/api/auth`);
   console.log(`   - Diary: http://localhost:${PORT}/api/diary`);
-  console.log(`   - Upload: http://localhost:${PORT}/api/upload/image`);
-  console.log(`   - Upload: http://localhost:${PORT}/api/upload/voice`);
-  console.log(`☁️  Cloudinary configured for image/voice uploads`);
+  console.log(`   - Upload Image: http://localhost:${PORT}/api/upload/image`);
+  console.log(`   - Upload Voice: http://localhost:${PORT}/api/upload/voice`);
+  console.log(`☁️  Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME ? '✅ Configured' : '❌ Missing'}`);
+  console.log(`📧 EmailJS Status:`);
+  console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ Set' : '❌ Missing'}`);
+  console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ Set' : '❌ Missing'}`);
+  console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing'}`);
+  console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing'}`);
+  console.log(`📌 Test Environment: http://localhost:${PORT}/api/test-env`);
+  
+  if (!process.env.EMAILJS_SERVICE_ID || !process.env.EMAILJS_TEMPLATE_ID || !process.env.EMAILJS_PUBLIC_KEY) {
+    console.log(`\n⚠️  Warning: EmailJS is not fully configured. Password reset emails will not work!`);
+    console.log(`   Please add EmailJS keys to your ${envFile} file.`);
+  }
+  
+  if (!process.env.MONGODB_URI) {
+    console.log(`\n❌ MongoDB URI is missing! Please check your environment variables.`);
+  }
 });
 
 server.on('error', (error) => {
