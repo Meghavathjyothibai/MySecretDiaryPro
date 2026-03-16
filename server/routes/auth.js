@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const nodemailer = require('nodemailer');
+const { sendPasswordResetEmail } = require('../emailService');
 
 // Store OTPs temporarily (in production, use Redis or database)
 const otpStore = new Map();
@@ -17,114 +17,6 @@ const generateToken = (userId) => {
 // Generate random OTP
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
-};
-
-// Configure email transporter - SIMPLE VERSION that works on Render
-let transporter = null;
-
-try {
-  transporter = nodemailer.createTransport({
-    service: 'gmail', // This uses Google's servers directly
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    },
-    // Simple timeouts
-    connectionTimeout: 30000,
-    socketTimeout: 30000,
-    debug: true,
-    logger: true
-  });
-
-  // Verify connection
-  transporter.verify((error, success) => {
-    if (error) {
-      console.error('❌ Transporter verification failed:', error);
-    } else {
-      console.log('✅ Gmail transporter is ready');
-    }
-  });
-} catch (error) {
-  console.error('❌ Failed to create transporter:', error);
-}
-
-// Send OTP email
-const sendOTPEmail = async (email, otp) => {
-  // If transporter failed to initialize, throw error
-  if (!transporter) {
-    throw new Error('Email transporter not configured');
-  }
-
-  const mailOptions = {
-    from: `"My Secret Diary" <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: '🔐 Password Reset OTP - My Secret Diary',
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      </head>
-      <body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4;">
-        <div style="max-width: 600px; margin: 20px auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-          
-          <!-- Header -->
-          <div style="background: linear-gradient(135deg, #6b46c1, #db2777); padding: 30px; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 28px;">My Secret Diary</h1>
-            <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0;">Password Reset Request</p>
-          </div>
-          
-          <!-- Content -->
-          <div style="padding: 40px 30px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <div style="background: #f3f4f6; border-radius: 12px; padding: 30px; display: inline-block;">
-                <h2 style="color: #6b46c1; margin: 0 0 10px;">Your OTP Code</h2>
-                <div style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #1f2937; background: white; padding: 20px; border-radius: 12px; border: 2px dashed #6b46c1;">
-                  ${otp}
-                </div>
-                <p style="color: #6b46c1; margin: 15px 0 0; font-weight: bold;">Valid for 10 minutes</p>
-              </div>
-            </div>
-            
-            <div style="background: #f9fafb; border-radius: 12px; padding: 20px; margin-top: 20px;">
-              <p style="color: #4b5563; margin: 0 0 10px; font-size: 14px;">
-                <strong>📝 Note:</strong> If you didn't request this password reset, please ignore this email or contact support if you have concerns.
-              </p>
-              <p style="color: #9ca3af; margin: 0; font-size: 12px; text-align: center;">
-                © ${new Date().getFullYear()} My Secret Diary. All rights reserved.
-              </p>
-            </div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `
-  };
-
-  try {
-    console.log(`📧 Attempting to send email to ${email} using Gmail service...`);
-    
-    // Send email
-    const info = await transporter.sendMail(mailOptions);
-    
-    console.log('✅ Email sent successfully:', {
-      messageId: info.messageId,
-      response: info.response,
-      to: email
-    });
-    
-    return true;
-  } catch (error) {
-    console.error('❌ Email sending failed:', {
-      error: error.message,
-      code: error.code,
-      command: error.command,
-      response: error.response,
-      responseCode: error.responseCode
-    });
-    throw error;
-  }
 };
 
 // Middleware to verify token
@@ -172,11 +64,6 @@ router.post('/register', async (req, res) => {
 
     // Validation
     if (!username || !email || !password) {
-      console.log('❌ Missing fields:', { 
-        username: !!username, 
-        email: !!email, 
-        password: !!password 
-      });
       return res.status(400).json({ 
         success: false, 
         message: 'Please provide all required fields' 
@@ -200,16 +87,11 @@ router.post('/register', async (req, res) => {
     }
 
     // Check if user already exists
-    console.log('🔍 Checking for existing user...');
     const existingUser = await User.findOne({
       $or: [{ email }, { username }]
     });
 
     if (existingUser) {
-      console.log('❌ User already exists:', { 
-        email: existingUser.email, 
-        username: existingUser.username 
-      });
       return res.status(400).json({ 
         success: false, 
         message: existingUser.email === email 
@@ -219,20 +101,17 @@ router.post('/register', async (req, res) => {
     }
 
     // Create new user
-    console.log('🆕 Creating new user...');
     const user = new User({
       username,
       email,
       password
     });
 
-    console.log('💾 Saving user to database...');
     await user.save();
     console.log('✅ User saved successfully with ID:', user._id);
 
     // Generate token
     const token = generateToken(user._id);
-    console.log('🔑 Token generated for user:', user._id);
 
     res.status(201).json({
       success: true,
@@ -251,48 +130,19 @@ router.post('/register', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('❌❌❌ REGISTER ERROR DETAILS:');
-    console.error('Error name:', error.name);
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
+    console.error('❌ Register error:', error);
     
-    // Check for specific MongoDB errors
-    if (error.name === 'MongoServerError') {
-      console.error('MongoDB Error Code:', error.code);
-      console.error('MongoDB Error Details:', error.errInfo);
-      
-      if (error.code === 11000) {
-        // Duplicate key error
-        const field = Object.keys(error.keyPattern)[0];
-        return res.status(400).json({ 
-          success: false, 
-          message: `${field} already exists. Please use a different ${field}.` 
-        });
-      }
-    }
-    
-    // Check for validation errors
-    if (error.name === 'ValidationError') {
-      console.error('Validation Errors:', error.errors);
-      const messages = Object.values(error.errors).map(val => val.message);
+    if (error.name === 'MongoServerError' && error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
         success: false, 
-        message: messages.join(', ') 
-      });
-    }
-
-    // Check for bcrypt errors
-    if (error.message.includes('bcrypt')) {
-      console.error('Bcrypt error detected. Make sure bcryptjs is installed correctly.');
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Password encryption error. Please try again.' 
+        message: `${field} already exists. Please use a different ${field}.` 
       });
     }
     
     res.status(500).json({ 
       success: false, 
-      message: 'Server error during registration: ' + error.message 
+      message: 'Server error during registration' 
     });
   }
 });
@@ -304,11 +154,7 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    console.log('🔐 Login attempt for email:', email);
-
-    // Validation
     if (!email || !password) {
-      console.log('❌ Missing login fields');
       return res.status(400).json({ 
         success: false, 
         message: 'Please provide email and password' 
@@ -316,32 +162,25 @@ router.post('/login', async (req, res) => {
     }
 
     // Find user by email
-    console.log('🔍 Searching for user...');
     const user = await User.findOne({ email });
     if (!user) {
-      console.log('❌ User not found with email:', email);
       return res.status(401).json({ 
         success: false, 
         message: 'Invalid email or password' 
       });
     }
-    console.log('✅ User found:', user.username);
 
     // Check password
-    console.log('🔑 Verifying password...');
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      console.log('❌ Password mismatch for user:', user.username);
       return res.status(401).json({ 
         success: false, 
         message: 'Invalid email or password' 
       });
     }
-    console.log('✅ Password verified successfully');
 
     // Generate token
     const token = generateToken(user._id);
-    console.log('🔑 Token generated for user:', user._id);
 
     res.json({
       success: true,
@@ -396,7 +235,7 @@ router.post('/forgot-password', async (req, res) => {
     // Find user by email
     const user = await User.findOne({ email });
     if (!user) {
-      console.log('ℹ️ User not found for forgot password (security: not revealing):', email);
+      console.log('ℹ️ User not found for forgot password:', email);
       // For security, don't reveal that user doesn't exist
       return res.json({ 
         success: true, 
@@ -418,11 +257,11 @@ router.post('/forgot-password', async (req, res) => {
       attempts: 0 
     });
 
-    console.log(`🔑 OTP generated for ${email}: ${process.env.NODE_ENV === 'development' ? otp : 'hidden'}`);
+    console.log(`🔑 OTP generated for ${email}`);
 
-    // Send email
+    // Send email via Resend
     try {
-      await sendOTPEmail(email, otp);
+      await sendPasswordResetEmail(email, otp);
       console.log(`✅ OTP email sent successfully to ${email}`);
       
       res.json({
@@ -433,21 +272,6 @@ router.post('/forgot-password', async (req, res) => {
       });
     } catch (emailError) {
       console.error('❌ Failed to send OTP email:', emailError);
-      
-      // Check for specific Gmail errors
-      if (emailError.code === 'EAUTH') {
-        return res.status(500).json({
-          success: false,
-          message: 'Email authentication failed. Please check your email settings.'
-        });
-      }
-      
-      if (emailError.code === 'ESOCKET' || emailError.message.includes('ENETUNREACH')) {
-        return res.status(500).json({
-          success: false,
-          message: 'Cannot connect to email server. Please try again later or contact support.'
-        });
-      }
       
       res.status(500).json({
         success: false,
@@ -483,7 +307,6 @@ router.post('/verify-otp', async (req, res) => {
     const storedData = otpStore.get(email);
     
     if (!storedData) {
-      console.log('❌ No OTP found for:', email);
       return res.status(400).json({ 
         success: false, 
         message: 'OTP expired or not found' 
@@ -492,7 +315,6 @@ router.post('/verify-otp', async (req, res) => {
 
     if (storedData.expiresAt < Date.now()) {
       otpStore.delete(email);
-      console.log('❌ OTP expired for:', email);
       return res.status(400).json({ 
         success: false, 
         message: 'OTP has expired' 
@@ -500,14 +322,13 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     if (storedData.otp !== otp) {
-      console.log('❌ Invalid OTP for:', email);
       return res.status(400).json({ 
         success: false, 
         message: 'Invalid OTP' 
       });
     }
 
-    // OTP verified - mark as verified but keep in store for password reset
+    // OTP verified - mark as verified
     storedData.verified = true;
     otpStore.set(email, storedData);
 
@@ -554,7 +375,6 @@ router.post('/reset-password', async (req, res) => {
     const storedData = otpStore.get(email);
     
     if (!storedData || storedData.otp !== otp || storedData.expiresAt < Date.now()) {
-      console.log('❌ Invalid or expired OTP for:', email);
       return res.status(400).json({ 
         success: false, 
         message: 'Invalid or expired OTP' 
@@ -564,7 +384,6 @@ router.post('/reset-password', async (req, res) => {
     // Find user
     const user = await User.findOne({ email });
     if (!user) {
-      console.log('❌ User not found for reset password:', email);
       return res.status(404).json({ 
         success: false, 
         message: 'User not found' 
@@ -603,8 +422,6 @@ router.get('/verify', authMiddleware, async (req, res) => {
     
     const user = await User.findById(req.userId).select('-password');
     
-    console.log('✅ Token verified successfully for:', user.username);
-    
     res.json({
       success: true,
       user: {
@@ -635,12 +452,9 @@ router.put('/profile', authMiddleware, async (req, res) => {
   try {
     const { username, name, email, bio, location, website } = req.body;
     
-    console.log('📝 Profile update attempt for user:', req.userId);
-    
     const user = await User.findById(req.userId);
     
     if (!user) {
-      console.log('❌ User not found for profile update:', req.userId);
       return res.status(404).json({ 
         success: false, 
         message: 'User not found' 
@@ -649,10 +463,8 @@ router.put('/profile', authMiddleware, async (req, res) => {
 
     // Check if username is already taken by another user
     if (username && username !== user.username) {
-      console.log('🔍 Checking username availability:', username);
       const existingUser = await User.findOne({ username });
       if (existingUser) {
-        console.log('❌ Username already taken:', username);
         return res.status(400).json({ 
           success: false, 
           message: 'Username already taken' 
@@ -662,10 +474,8 @@ router.put('/profile', authMiddleware, async (req, res) => {
 
     // Check if email is already taken by another user
     if (email && email !== user.email) {
-      console.log('🔍 Checking email availability:', email);
       const existingUser = await User.findOne({ email });
       if (existingUser) {
-        console.log('❌ Email already in use:', email);
         return res.status(400).json({ 
           success: false, 
           message: 'Email already in use' 
@@ -673,7 +483,7 @@ router.put('/profile', authMiddleware, async (req, res) => {
       }
     }
 
-    // Update fields (only if provided)
+    // Update fields
     if (username) user.username = username;
     if (name) user.name = name;
     if (email) user.email = email;
@@ -682,7 +492,6 @@ router.put('/profile', authMiddleware, async (req, res) => {
     if (website !== undefined) user.website = website;
 
     await user.save();
-    console.log('✅ Profile updated successfully for user:', user.username);
 
     res.json({
       success: true,
@@ -715,8 +524,6 @@ router.post('/change-password', authMiddleware, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
-    console.log('🔐 Password change attempt for user:', req.userId);
-
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ 
         success: false, 
@@ -734,7 +541,6 @@ router.post('/change-password', authMiddleware, async (req, res) => {
     const user = await User.findById(req.userId);
     
     if (!user) {
-      console.log('❌ User not found for password change:', req.userId);
       return res.status(404).json({ 
         success: false, 
         message: 'User not found' 
@@ -742,21 +548,17 @@ router.post('/change-password', authMiddleware, async (req, res) => {
     }
 
     // Check current password
-    console.log('🔑 Verifying current password...');
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
-      console.log('❌ Current password is incorrect for user:', user.username);
       return res.status(401).json({ 
         success: false, 
         message: 'Current password is incorrect' 
       });
     }
-    console.log('✅ Current password verified');
 
     // Update password
     user.password = newPassword;
     await user.save();
-    console.log('✅ Password changed successfully for user:', user.username);
 
     res.json({
       success: true,
@@ -778,8 +580,6 @@ router.post('/upload-avatar', authMiddleware, async (req, res) => {
   try {
     const { avatarUrl } = req.body;
 
-    console.log('🖼️ Avatar upload attempt for user:', req.userId);
-
     if (!avatarUrl) {
       return res.status(400).json({ 
         success: false, 
@@ -790,7 +590,6 @@ router.post('/upload-avatar', authMiddleware, async (req, res) => {
     const user = await User.findById(req.userId);
     
     if (!user) {
-      console.log('❌ User not found for avatar upload:', req.userId);
       return res.status(404).json({ 
         success: false, 
         message: 'User not found' 
@@ -801,8 +600,6 @@ router.post('/upload-avatar', authMiddleware, async (req, res) => {
     user.avatar = avatarUrl;
     await user.save();
     
-    console.log('✅ Avatar updated successfully for user:', user.username);
-
     res.json({
       success: true,
       message: 'Avatar updated successfully',
