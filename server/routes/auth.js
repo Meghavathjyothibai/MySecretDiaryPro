@@ -19,37 +19,29 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Configure email transporter with port 587 (works on Render)
+// Configure email transporter - SIMPLE VERSION that works on Render
 let transporter = null;
 
 try {
   transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // Use TLS
+    service: 'gmail', // This uses Google's servers directly
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
     },
-    tls: {
-      rejectUnauthorized: false // Helps with some network issues
-    },
-    // These timeouts help prevent hanging
-    connectionTimeout: 30000, // 30 seconds
-    greetingTimeout: 30000,    // 30 seconds
-    socketTimeout: 30000,      // 30 seconds
-    // Force IPv4 to avoid IPv6 issues on Render
-    family: 4,
+    // Simple timeouts
+    connectionTimeout: 30000,
+    socketTimeout: 30000,
     debug: true,
     logger: true
   });
 
-  // Verify connection configuration
+  // Verify connection
   transporter.verify((error, success) => {
     if (error) {
       console.error('❌ Transporter verification failed:', error);
     } else {
-      console.log('✅ Transporter is ready to send emails on port 587');
+      console.log('✅ Gmail transporter is ready');
     }
   });
 } catch (error) {
@@ -111,15 +103,10 @@ const sendOTPEmail = async (email, otp) => {
   };
 
   try {
-    console.log(`📧 Attempting to send email to ${email} on port 587...`);
+    console.log(`📧 Attempting to send email to ${email} using Gmail service...`);
     
-    // Send email with timeout
-    const info = await Promise.race([
-      transporter.sendMail(mailOptions),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Email sending timeout after 30 seconds')), 30000)
-      )
-    ]);
+    // Send email
+    const info = await transporter.sendMail(mailOptions);
     
     console.log('✅ Email sent successfully:', {
       messageId: info.messageId,
