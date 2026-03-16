@@ -62,7 +62,7 @@ app.get('/api/test-env', (req, res) => {
   });
 });
 
-// ===== TEST EMAILJS ROUTE (FILE 2 - ADDED) =====
+// ===== TEST EMAILJS ROUTE (UPDATED with correct variables) =====
 app.get('/api/test-email', async (req, res) => {
   try {
     const { email } = req.query;
@@ -95,21 +95,23 @@ app.get('/api/test-email', async (req, res) => {
       });
     }
 
-    // Prepare payload
+    // IMPORTANT: Using CORRECT variable names based on test results
+    // Your template uses: {{email}}, {{otp}}, {{name}}
     const payload = {
       service_id: serviceId,
       template_id: templateId,
       user_id: publicKey,
       accessToken: privateKey,
       template_params: {
-        to_email: email,
-        to_name: 'Test User',
-        otp: '123456',
+        email: email,           // ← FIXED: Using 'email' (not 'to_email')
+        otp: '123456',          // ← FIXED: Using 'otp'
+        name: 'Test User',      // ← FIXED: Using 'name' (not 'to_name')
         reply_to: 'noreply@mysecretdiary.com'
       }
     };
 
     console.log('📤 Sending payload to EmailJS...');
+    console.log('Payload:', JSON.stringify(payload, null, 2));
 
     // Send with increased timeout
     const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
@@ -123,7 +125,7 @@ app.get('/api/test-email', async (req, res) => {
     console.log('✅ EmailJS Response:', response.data);
     res.json({ 
       success: true, 
-      message: 'Test email sent successfully!',
+      message: '✅ Test email sent successfully! Check your inbox.',
       data: response.data 
     });
   } catch (error) {
@@ -152,7 +154,7 @@ app.get('/api/test-email', async (req, res) => {
   }
 });
 
-// ===== TEST EMAILJS POST ROUTE (Alternative) =====
+// ===== TEST EMAILJS POST ROUTE (UPDATED with correct variables) =====
 app.post('/api/test-email', async (req, res) => {
   try {
     const { email } = req.body;
@@ -166,15 +168,16 @@ app.post('/api/test-email', async (req, res) => {
 
     console.log('\n🧪 Testing EmailJS POST with email:', email);
     
+    // IMPORTANT: Using CORRECT variable names
     const payload = {
       service_id: process.env.EMAILJS_SERVICE_ID,
       template_id: process.env.EMAILJS_TEMPLATE_ID,
       user_id: process.env.EMAILJS_PUBLIC_KEY,
       accessToken: process.env.EMAILJS_PRIVATE_KEY,
       template_params: {
-        to_email: email,
-        to_name: 'Test User',
-        otp: '123456',
+        email: email,           // ← FIXED: Using 'email'
+        otp: '123456',          // ← FIXED: Using 'otp'
+        name: 'Test User',      // ← FIXED: Using 'name'
         reply_to: 'noreply@mysecretdiary.com'
       }
     };
@@ -189,10 +192,11 @@ app.post('/api/test-email', async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: 'Test email sent successfully!',
+      message: '✅ Test email sent successfully!',
       data: response.data 
     });
   } catch (error) {
+    console.error('❌ POST Error:', error.response?.data || error.message);
     res.status(500).json({ 
       success: false, 
       error: error.response?.data || error.message 

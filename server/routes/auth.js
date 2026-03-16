@@ -1,5 +1,16 @@
 const express = require('express');
 const router = express.Router();
+
+// ========== SUPER SIMPLE TEST ROUTE ==========
+router.get('/ping', (req, res) => {
+    console.log('✅ PING route hit!');
+    res.json({ 
+        success: true, 
+        message: 'Server is working!',
+        time: new Date().toISOString()
+    });
+});
+
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const axios = require('axios');
@@ -22,115 +33,76 @@ const generateOTP = () => {
 };
 
 // ==================== EMAILJS FUNCTION ====================
-const sendOTPEmail = async (email, username, otp) => {
+// ==================== EMAILJS FUNCTION - FIXED ====================
+async function sendOtpEmail(toEmail, otp, username = 'User') {
   try {
-    const serviceId = process.env.EMAILJS_SERVICE_ID;
-    const templateId = process.env.EMAILJS_TEMPLATE_ID;
-    const publicKey = process.env.EMAILJS_PUBLIC_KEY;
-    const privateKey = process.env.EMAILJS_PRIVATE_KEY;
+    console.log('\n📧 Sending OTP email to:', toEmail);
+    console.log('🔑 OTP:', otp);
+    console.log('👤 Username:', username);
+    
+    // Check if EmailJS is configured
+    if (!process.env.EMAILJS_SERVICE_ID || !process.env.EMAILJS_TEMPLATE_ID || !process.env.EMAILJS_PUBLIC_KEY) {
+      console.error('❌ EmailJS configuration missing!');
+      return { 
+        success: false, 
+        error: 'EmailJS configuration missing. Check your .env.local file.' 
+      };
+    }
 
-    console.log('\n🔍 EmailJS Debug Info:');
-    console.log('   - Service ID:', serviceId);
-    console.log('   - Template ID:', templateId);
-    console.log('   - Public Key:', publicKey);
-    console.log('   - To Email:', email);
-    console.log('   - OTP:', otp);
-
-    // Try different variable combinations (your template might use any of these)
-    const templateVariations = [
-      { to_email: email, to_name: username || 'User', otp: otp },
-      { user_email: email, user_name: username || 'User', otp: otp },
-      { recipient: email, name: username || 'User', otp: otp },
-      { email: email, username: username || 'User', otp: otp }
-    ];
-
-    // Use the first variation (to_email) - most common
-    const template_params = templateVariations[0];
-
+    // IMPORTANT: Based on test results, your template uses:
+    // - {{email}} for email address
+    // - {{otp}} for OTP code
+    // - {{name}} for username
     const payload = {
-      service_id: serviceId,
-      template_id: templateId,
-      user_id: publicKey,
-      accessToken: privateKey,
-      template_params: template_params
+      service_id: process.env.EMAILJS_SERVICE_ID,
+      template_id: process.env.EMAILJS_TEMPLATE_ID,
+      user_id: process.env.EMAILJS_PUBLIC_KEY,
+      accessToken: process.env.EMAILJS_PRIVATE_KEY,
+      template_params: {
+        email: toEmail,     // ← FIXED: Using 'email' (not 'to_email')
+        otp: otp,           // ← FIXED: Using 'otp'
+        name: username,     // ← FIXED: Using 'name' (not 'to_name')
+        reply_to: 'noreply@mysecretdiary.com'
+      }
     };
 
-    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
-      timeout: 30000,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    console.log('📤 Sending payload to EmailJS...');
+    console.log('Payload:', JSON.stringify(payload, null, 2));
+    
+    const response = await axios.post(
+      'https://api.emailjs.com/api/v1.0/email/send',
+      payload,
+      { 
+        timeout: 30000,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Origin': 'http://localhost:3000'
+        } 
+      }
+    );
 
-    console.log('✅ EmailJS Success!');
+    console.log('✅ OTP email sent successfully!', response.data);
     return { success: true, data: response.data };
   } catch (error) {
-    console.error('❌ EmailJS Error:', error.response?.data || error.message);
-    return { success: false, error: error.response?.data || error.message };
-  }
-};
-
-// ==================== TEST ROUTES - ADD THESE ====================
-
-// @route   GET /api/test-variables - Test different variable names
-router.get('/test-variables', async (req, res) => {
-  try {
-    const { email } = req.query;
-    
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email required' });
+    console.error('❌ EmailJS Error:');
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error('Data:', error.response.data);
+    } else if (error.request) {
+      console.error('No response received from EmailJS');
+    } else {
+      console.error('Error:', error.message);
     }
-
-    console.log('\n🧪 Testing different variable names for:', email);
-    
-    const serviceId = process.env.EMAILJS_SERVICE_ID;
-    const templateId = process.env.EMAILJS_TEMPLATE_ID;
-    const publicKey = process.env.EMAILJS_PUBLIC_KEY;
-    const privateKey = process.env.EMAILJS_PRIVATE_KEY;
-
-    // Test different variable combinations
-    const variations = [
-      { to_email: email, otp: '123456', to_name: 'Test User' },
-      { user_email: email, otp: '123456', user_name: 'Test User' },
-      { recipient: email, otp: '123456', name: 'Test User' },
-      { email: email, otp: '123456', username: 'Test User' }
-    ];
-
-    const results = [];
-
-    for (let i = 0; i < variations.length; i++) {
-      try {
-        console.log(`\nTrying variation ${i + 1}:`, variations[i]);
-        
-        const payload = {
-          service_id: serviceId,
-          template_id: templateId,
-          user_id: publicKey,
-          accessToken: privateKey,
-          template_params: variations[i]
-        };
-
-        await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
-          timeout: 10000,
-          headers: { 'Content-Type': 'application/json' }
-        });
-
-        results.push({ variation: i + 1, params: variations[i], success: true });
-      } catch (error) {
-        results.push({ 
-          variation: i + 1, 
-          params: variations[i], 
-          success: false, 
-          error: error.response?.data || error.message 
-        });
-      }
-    }
-
-    res.json({ success: true, results });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    return { 
+      success: false, 
+      error: error.response?.data || error.message 
+    };
   }
-});
+}
 
-// @route   GET /api/test-email - Simple test with GET
+// ==================== TEST ROUTES ====================
+
+// @route   GET /api/test-email
 router.get('/test-email', async (req, res) => {
   try {
     const { email } = req.query;
@@ -139,21 +111,27 @@ router.get('/test-email', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
-    console.log('\n🧪 Testing EmailJS GET with email:', email);
+    console.log('\n🧪 Testing EmailJS with email:', email);
     
-    const result = await sendOTPEmail(email, 'Test User', '123456');
+    const testOTP = '123456';
+    const result = await sendOtpEmail(email, testOTP, 'Test User');
     
     if (result.success) {
       res.json({ success: true, message: '✅ Test email sent! Check your inbox.' });
     } else {
-      res.status(500).json({ success: false, message: 'Failed to send test email', error: result.error });
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to send test email',
+        error: result.error 
+      });
     }
   } catch (error) {
+    console.error('❌ Test route error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// @route   POST /api/test-email - Simple test with POST
+// @route   POST /api/test-email
 router.post('/test-email', async (req, res) => {
   try {
     const { email } = req.body;
@@ -164,37 +142,201 @@ router.post('/test-email', async (req, res) => {
 
     console.log('\n🧪 Testing EmailJS POST with email:', email);
     
-    const result = await sendOTPEmail(email, 'Test User', '123456');
+    const testOTP = '123456';
+    const result = await sendOtpEmail(email, testOTP, 'Test User');
     
     if (result.success) {
       res.json({ success: true, message: '✅ Test email sent! Check your inbox.' });
     } else {
-      res.status(500).json({ success: false, message: 'Failed to send test email', error: result.error });
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to send test email',
+        error: result.error 
+      });
     }
   } catch (error) {
+    console.error('❌ Test route error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// @route   POST /api/test-emailjs - Original test route
-router.post('/test-emailjs', async (req, res) => {
+// @route   GET /api/test-variables
+router.get('/test-variables', async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email } = req.query;
     
     if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
+      return res.status(400).json({ success: false, message: 'Email required' });
     }
 
-    console.log('\n🧪 Testing EmailJS connection...');
-    const result = await sendOTPEmail(email, 'Test User', '123456');
+    console.log('\n🧪 Testing different variable names for:', email);
     
-    if (result.success) {
-      res.json({ success: true, message: '✅ Test email sent! Check your inbox.' });
+    const variations = [
+      { to_email: email, otp: '123456', to_name: 'Test User' },
+      { user_email: email, otp: '123456', user_name: 'Test User' },
+      { recipient: email, otp: '123456', name: 'Test User' },
+      { email: email, otp: '123456', username: 'Test User' },
+      { email: email, otp: '123456', to_name: 'Test User' },
+      { to: email, otp: '123456', name: 'Test User' }
+    ];
+
+    const results = [];
+
+    for (let i = 0; i < variations.length; i++) {
+      try {
+        console.log(`\n🔄 Trying variation ${i + 1}:`, variations[i]);
+        
+        const payload = {
+          service_id: process.env.EMAILJS_SERVICE_ID,
+          template_id: process.env.EMAILJS_TEMPLATE_ID,
+          user_id: process.env.EMAILJS_PUBLIC_KEY,
+          accessToken: process.env.EMAILJS_PRIVATE_KEY,
+          template_params: variations[i]
+        };
+
+        const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
+          timeout: 10000,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Origin': 'http://localhost:3000'
+          }
+        });
+
+        results.push({ 
+          variation: i + 1, 
+          params: variations[i], 
+          success: true,
+          response: response.data
+        });
+        
+        // Stop on first success
+        break;
+      } catch (error) {
+        results.push({ 
+          variation: i + 1, 
+          params: variations[i], 
+          success: false, 
+          error: error.response?.data || error.message 
+        });
+      }
+    }
+
+    const working = results.find(r => r.success);
+    
+    if (working) {
+      console.log('\n🎯 FOUND WORKING VARIABLE!');
+      console.log('Working params:', working.params);
+      res.json({ 
+        success: true, 
+        message: '✅ Found working variable combination!',
+        working_variables: working.params,
+        results: results
+      });
     } else {
-      res.status(500).json({ success: false, message: 'Failed to send test email', error: result.error });
+      res.json({ 
+        success: false, 
+        message: '❌ No working variable combination found',
+        results: results 
+      });
     }
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Test variables error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// @route   GET /api/test-all-variables
+router.get('/test-all-variables', async (req, res) => {
+  try {
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email required' });
+    }
+
+    console.log('\n🧪 Testing ALL possible variable names for:', email);
+    
+    const allVariations = [
+      { email: email, otp: '123456', name: 'Test User' },
+      { to: email, otp: '123456', name: 'Test User' },
+      { to_email: email, otp: '123456', name: 'Test User' },
+      { user_email: email, otp: '123456', name: 'Test User' },
+      { recipient: email, otp: '123456', name: 'Test User' },
+      { mail: email, otp: '123456', name: 'Test User' },
+      { address: email, otp: '123456', name: 'Test User' },
+      { email_address: email, otp: '123456', name: 'Test User' },
+      { email: email, otp: '123456', username: 'Test User' },
+      { email: email, otp: '123456', user_name: 'Test User' },
+      { email: email, otp: '123456', to_name: 'Test User' },
+      { email: email, otp: '123456', full_name: 'Test User' },
+      { email: email, otp: '123456', recipient_name: 'Test User' },
+      { to_email: email, otp: '123456', to_name: 'Test User' },
+      { user_email: email, otp: '123456', user_name: 'Test User' },
+      { recipient: email, otp: '123456', recipient_name: 'Test User' }
+    ];
+
+    const results = [];
+
+    for (let i = 0; i < allVariations.length; i++) {
+      try {
+        console.log(`\n🔄 Trying variation ${i + 1}:`, allVariations[i]);
+        
+        const payload = {
+          service_id: process.env.EMAILJS_SERVICE_ID,
+          template_id: process.env.EMAILJS_TEMPLATE_ID,
+          user_id: process.env.EMAILJS_PUBLIC_KEY,
+          accessToken: process.env.EMAILJS_PRIVATE_KEY,
+          template_params: allVariations[i]
+        };
+
+        const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
+          timeout: 10000,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Origin': 'http://localhost:3000'
+          }
+        });
+
+        results.push({ 
+          variation: i + 1, 
+          params: allVariations[i], 
+          success: true,
+          message: '✅ WORKING!',
+          response: response.data
+        });
+        
+        break;
+      } catch (error) {
+        results.push({ 
+          variation: i + 1, 
+          params: allVariations[i], 
+          success: false, 
+          error: error.response?.data || error.message 
+        });
+      }
+    }
+
+    const working = results.find(r => r.success);
+    
+    if (working) {
+      console.log('\n🎯 FOUND WORKING VARIABLE!');
+      console.log('Working params:', working.params);
+      res.json({ 
+        success: true, 
+        message: '✅ Found working variable combination!',
+        working_variables: working.params,
+        all_results: results
+      });
+    } else {
+      res.json({ 
+        success: false, 
+        message: '❌ No working variable combination found',
+        all_results: results 
+      });
+    }
+  } catch (error) {
+    console.error('❌ Test all variables error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -345,34 +487,39 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
+    // Find user
     const user = await User.findOne({ email });
     if (!user) {
+      // Don't reveal that user doesn't exist (security)
       return res.json({ success: true, message: 'If your email is registered, you will receive an OTP' });
     }
 
+    // Generate OTP
     const otp = generateOTP();
-    const expiresAt = Date.now() + 10 * 60 * 1000;
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
+    // Store OTP
     otpStore.set(email, { 
       otp, 
       expiresAt, 
       userId: user._id,
-      attempts: 0,
       verified: false
     });
 
     console.log(`🔑 OTP generated for ${email}: ${otp}`);
 
-    const emailResult = await sendOTPEmail(email, user.username, otp);
+    // Send OTP email
+    const emailResult = await sendOtpEmail(email, otp, user.username);
     
     if (emailResult.success) {
       console.log(`✅ OTP email sent successfully to ${email}`);
       res.json({ success: true, message: 'OTP sent successfully to your email' });
     } else {
-      console.error('❌ Failed to send OTP email:', emailResult.error);
+      console.error('❌ Failed to send OTP email');
       res.status(500).json({ 
         success: false, 
-        message: 'Failed to send OTP. Please try again.'
+        message: 'Failed to send OTP. Please try again.',
+        error: emailResult.error
       });
     }
   } catch (error) {
@@ -402,8 +549,6 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     if (storedData.otp !== otp) {
-      storedData.attempts += 1;
-      otpStore.set(email, storedData);
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
 
