@@ -687,15 +687,4 @@ router.post('/upload-avatar', authMiddleware, async (req, res) => {
   }
 });
 
-// @route   GET /api/auth/logout
-// @desc    Logout user (client-side only, but included for completeness)
-// @access  Private
-router.post('/logout', authMiddleware, (req, res) => {
-  // JWT is stateless, so logout is handled client-side by removing token
-  res.json({
-    success: true,
-    message: 'Logged out successfully'
-  });
-});
-
 module.exports = router;

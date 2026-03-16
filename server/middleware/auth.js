@@ -6,10 +6,6 @@ const jwt = require('jsonwebtoken');
  */
 module.exports = (req, res, next) => {
   // Get token from multiple possible sources
-  // 1. x-auth-token header (legacy)
-  // 2. Authorization header (Bearer token)
-  // 3. Cookie (if you use cookies in the future)
-  
   let token = req.header('x-auth-token');
   
   // If no x-auth-token, check Authorization header
@@ -20,7 +16,7 @@ module.exports = (req, res, next) => {
     }
   }
 
-  // Debug log (remove in production)
+  // Debug log
   console.log('🔑 Auth Middleware - Token present:', !!token);
 
   // Check if token exists
@@ -46,25 +42,17 @@ module.exports = (req, res, next) => {
     });
 
     // ATTACH USER INFO TO REQUEST
-    // Your auth.js routes expect req.userId
     req.userId = decoded.userId;
-    
-    // Also attach full user object for flexibility
     req.user = decoded;
     
-    // For legacy compatibility with some routes
     if (decoded.user) {
       req.user = decoded.user;
     }
 
-    // Log successful authentication
     console.log(`👤 Authenticated user ID: ${req.userId}`);
-    
-    // Proceed to next middleware/route handler
     next();
     
   } catch (error) {
-    // Handle specific JWT errors
     console.error('❌ Auth Middleware - Token verification failed:', error.message);
     
     if (error.name === 'TokenExpiredError') {
@@ -81,7 +69,6 @@ module.exports = (req, res, next) => {
       });
     }
     
-    // Generic error
     res.status(401).json({ 
       success: false,
       message: 'Token is not valid' 
