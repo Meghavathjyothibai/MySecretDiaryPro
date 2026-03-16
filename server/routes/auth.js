@@ -21,34 +21,126 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// ==================== EMAILJS FUNCTION ====================
+// ==================== IMPROVED EMAILJS FUNCTION WITH TIMEOUT ====================
 const sendOTPEmail = async (email, username, otp) => {
   try {
-    console.log('📧 Sending OTP via EmailJS to:', email);
-    console.log('Service ID:', process.env.EMAILJS_SERVICE_ID);
-    console.log('Template ID:', process.env.EMAILJS_TEMPLATE_ID);
+    // Get environment variables
+    const serviceId = process.env.EMAILJS_SERVICE_ID;
+    const templateId = process.env.EMAILJS_TEMPLATE_ID;
+    const publicKey = process.env.EMAILJS_PUBLIC_KEY;
+    const privateKey = process.env.EMAILJS_PRIVATE_KEY;
 
-    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', {
-      service_id: process.env.EMAILJS_SERVICE_ID,
-      template_id: process.env.EMAILJS_TEMPLATE_ID,
-      user_id: process.env.EMAILJS_PUBLIC_KEY,
-      accessToken: process.env.EMAILJS_PRIVATE_KEY,
+    // Validate keys
+    if (!serviceId || !templateId || !publicKey) {
+      console.error('❌ EmailJS configuration missing!');
+      console.error('Service ID:', serviceId ? '✅' : '❌');
+      console.error('Template ID:', templateId ? '✅' : '❌');
+      console.error('Public Key:', publicKey ? '✅' : '❌');
+      throw new Error('EmailJS configuration missing. Check your .env.local file');
+    }
+
+    console.log('📧 Sending OTP via EmailJS to:', email);
+    console.log('Service ID:', serviceId);
+    console.log('Template ID:', templateId);
+    console.log('Public Key:', publicKey ? '✅ Present' : '❌ Missing');
+
+    // Prepare the payload
+    const payload = {
+      service_id: serviceId,
+      template_id: templateId,
+      user_id: publicKey,
+      accessToken: privateKey,
       template_params: {
         to_email: email,
         to_name: username || 'User',
         otp: otp,
         reply_to: 'noreply@mysecretdiary.com'
       }
+    };
+
+    console.log('📤 Sending request to EmailJS API...');
+
+    // Send with increased timeout (20 seconds)
+    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
+      timeout: 20000, // 20 seconds timeout
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'http://localhost:3000'
+      }
     });
 
     console.log('✅ EmailJS Response:', response.data);
-    return { success: true, data: response.data };
-  } catch (error) {
-    console.error('❌ EmailJS Error:', error.response?.data || error.message);
     return { 
-      success: false, 
-      error: error.response?.data || error.message 
+      success: true, 
+      data: response.data,
+      message: 'OTP sent successfully'
     };
+
+  } catch (error) {
+    console.error('❌ EmailJS Error Details:');
+    
+    if (error.code === 'ECONNABORTED') {
+      console.error('   - Error: Request timeout (20s exceeded)');
+      console.error('   - This might be due to EmailJS server slowness or network issues');
+      return { 
+        success: false, 
+        error: 'Request timeout',
+        message: 'Email service is taking too long. Please try again.'
+      };
+    }
+    
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      console.error('   - Status:', error.response.status);
+      console.error('   - Data:', error.response.data);
+      
+      // Handle specific EmailJS errors
+      if (error.response.status === 400) {
+        if (error.response.data === 'Invalid service_id') {
+          return { 
+            success: false, 
+            error: 'Invalid Service ID',
+            message: 'Email service configuration error. Please contact support.'
+          };
+        }
+        if (error.response.data === 'Invalid template_id') {
+          return { 
+            success: false, 
+            error: 'Invalid Template ID',
+            message: 'Email template configuration error. Please contact support.'
+          };
+        }
+        if (error.response.data === 'The Public Key is required') {
+          return { 
+            success: false, 
+            error: 'Missing Public Key',
+            message: 'Email service configuration error. Please contact support.'
+          };
+        }
+      }
+      
+      return { 
+        success: false, 
+        error: error.response.data || 'EmailJS API error',
+        message: 'Failed to send email. Please try again.'
+      };
+    } else if (error.request) {
+      // The request was made but no response was received
+      console.error('   - No response received from EmailJS');
+      return { 
+        success: false, 
+        error: 'No response from EmailJS',
+        message: 'Email service is not responding. Please try again later.'
+      };
+    } else {
+      // Something happened in setting up the request
+      console.error('   - Error:', error.message);
+      return { 
+        success: false, 
+        error: error.message,
+        message: 'Failed to send email. Please try again.'
+      };
+    }
   }
 };
 
@@ -64,22 +156,25 @@ router.post('/test-emailjs', async (req, res) => {
       });
     }
 
+    console.log('🧪 Testing EmailJS connection...');
     const testOTP = '123456';
     const result = await sendOTPEmail(email, 'Test User', testOTP);
     
     if (result.success) {
       res.json({ 
         success: true, 
-        message: '✅ Test email sent! Check your inbox.' 
+        message: '✅ Test email sent! Check your inbox.',
+        details: result
       });
     } else {
       res.status(500).json({ 
         success: false, 
-        message: 'Failed to send test email',
-        error: result.error 
+        message: result.message || 'Failed to send test email',
+        error: result.error
       });
     }
   } catch (error) {
+    console.error('❌ Test route error:', error);
     res.status(500).json({ 
       success: false, 
       message: error.message 
@@ -366,7 +461,7 @@ router.post('/forgot-password', async (req, res) => {
       verified: false
     });
 
-    console.log(`🔑 OTP generated for ${email}: ${otp}`);
+    console.log(`🔑 OTP generated for ${email}`);
 
     // ===== SEND EMAIL VIA EMAILJS =====
     const emailResult = await sendOTPEmail(email, user.username, otp);
@@ -383,10 +478,11 @@ router.post('/forgot-password', async (req, res) => {
     } else {
       console.error('❌ Failed to send OTP email:', emailResult.error);
       
-      // Still return success for security, but log the error
-      res.json({
-        success: true,
-        message: 'If your email is registered, you will receive an OTP'
+      // Return helpful error message
+      res.status(500).json({
+        success: false,
+        message: emailResult.message || 'Failed to send OTP. Please try again.',
+        error: emailResult.error
       });
     }
 
