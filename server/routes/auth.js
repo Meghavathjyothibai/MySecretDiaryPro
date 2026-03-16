@@ -19,12 +19,14 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Configure email transporter with better error handling
+// Configure email transporter with port 587 (works on Render)
 let transporter = null;
 
 try {
   transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // Use TLS
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
@@ -47,7 +49,7 @@ try {
     if (error) {
       console.error('❌ Transporter verification failed:', error);
     } else {
-      console.log('✅ Transporter is ready to send emails');
+      console.log('✅ Transporter is ready to send emails on port 587');
     }
   });
 } catch (error) {
@@ -109,7 +111,7 @@ const sendOTPEmail = async (email, otp) => {
   };
 
   try {
-    console.log(`📧 Attempting to send email to ${email}...`);
+    console.log(`📧 Attempting to send email to ${email} on port 587...`);
     
     // Send email with timeout
     const info = await Promise.race([
