@@ -19,47 +19,123 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  // Force IPv4 to avoid Render IPv6 issues
-  connectionTimeout: 10000,
-  socketTimeout: 10000,
-  debug: true,
-  logger: true,
-  family: 4
-});
+// Configure email transporter with better error handling
+let transporter = null;
+
+try {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    },
+    tls: {
+      rejectUnauthorized: false // Helps with some network issues
+    },
+    // These timeouts help prevent hanging
+    connectionTimeout: 30000, // 30 seconds
+    greetingTimeout: 30000,    // 30 seconds
+    socketTimeout: 30000,      // 30 seconds
+    // Force IPv4 to avoid IPv6 issues on Render
+    family: 4,
+    debug: true,
+    logger: true
+  });
+
+  // Verify connection configuration
+  transporter.verify((error, success) => {
+    if (error) {
+      console.error('❌ Transporter verification failed:', error);
+    } else {
+      console.log('✅ Transporter is ready to send emails');
+    }
+  });
+} catch (error) {
+  console.error('❌ Failed to create transporter:', error);
+}
+
 // Send OTP email
 const sendOTPEmail = async (email, otp) => {
+  // If transporter failed to initialize, throw error
+  if (!transporter) {
+    throw new Error('Email transporter not configured');
+  }
+
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: `"My Secret Diary" <${process.env.EMAIL_USER}>`,
     to: email,
-    subject: 'Password Reset OTP - My Secret Diary',
+    subject: '🔐 Password Reset OTP - My Secret Diary',
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-        <div style="text-align: center; margin-bottom: 20px;">
-          <h1 style="color: #6b46c1;">My Secret Diary</h1>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4;">
+        <div style="max-width: 600px; margin: 20px auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+          
+          <!-- Header -->
+          <div style="background: linear-gradient(135deg, #6b46c1, #db2777); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 28px;">My Secret Diary</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0;">Password Reset Request</p>
+          </div>
+          
+          <!-- Content -->
+          <div style="padding: 40px 30px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <div style="background: #f3f4f6; border-radius: 12px; padding: 30px; display: inline-block;">
+                <h2 style="color: #6b46c1; margin: 0 0 10px;">Your OTP Code</h2>
+                <div style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #1f2937; background: white; padding: 20px; border-radius: 12px; border: 2px dashed #6b46c1;">
+                  ${otp}
+                </div>
+                <p style="color: #6b46c1; margin: 15px 0 0; font-weight: bold;">Valid for 10 minutes</p>
+              </div>
+            </div>
+            
+            <div style="background: #f9fafb; border-radius: 12px; padding: 20px; margin-top: 20px;">
+              <p style="color: #4b5563; margin: 0 0 10px; font-size: 14px;">
+                <strong>📝 Note:</strong> If you didn't request this password reset, please ignore this email or contact support if you have concerns.
+              </p>
+              <p style="color: #9ca3af; margin: 0; font-size: 12px; text-align: center;">
+                © ${new Date().getFullYear()} My Secret Diary. All rights reserved.
+              </p>
+            </div>
+          </div>
         </div>
-        <div style="background: linear-gradient(135deg, #6b46c1, #db2777); padding: 30px; border-radius: 10px; color: white; text-align: center;">
-          <h2 style="margin-bottom: 10px;">Password Reset OTP</h2>
-          <p style="font-size: 36px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">${otp}</p>
-          <p style="font-size: 14px;">This OTP is valid for 10 minutes</p>
-        </div>
-        <div style="text-align: center; margin-top: 20px; color: #666;">
-          <p>If you didn't request this, please ignore this email.</p>
-          <p>© ${new Date().getFullYear()} My Secret Diary. All rights reserved.</p>
-        </div>
-      </div>
+      </body>
+      </html>
     `
   };
 
-  await transporter.sendMail(mailOptions);
+  try {
+    console.log(`📧 Attempting to send email to ${email}...`);
+    
+    // Send email with timeout
+    const info = await Promise.race([
+      transporter.sendMail(mailOptions),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Email sending timeout after 30 seconds')), 30000)
+      )
+    ]);
+    
+    console.log('✅ Email sent successfully:', {
+      messageId: info.messageId,
+      response: info.response,
+      to: email
+    });
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Email sending failed:', {
+      error: error.message,
+      code: error.code,
+      command: error.command,
+      response: error.response,
+      responseCode: error.responseCode
+    });
+    throw error;
+  }
 };
 
 // Middleware to verify token
@@ -319,10 +395,19 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
+      });
+    }
+
     // Find user by email
     const user = await User.findOne({ email });
     if (!user) {
-      console.log('❌ User not found for forgot password:', email);
+      console.log('ℹ️ User not found for forgot password (security: not revealing):', email);
       // For security, don't reveal that user doesn't exist
       return res.json({ 
         success: true, 
@@ -330,35 +415,62 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
+    console.log('✅ User found:', user.username);
+
     // Generate OTP
     const otp = generateOTP();
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
     // Store OTP
-    otpStore.set(email, { otp, expiresAt, userId: user._id });
+    otpStore.set(email, { 
+      otp, 
+      expiresAt, 
+      userId: user._id,
+      attempts: 0 
+    });
+
+    console.log(`🔑 OTP generated for ${email}: ${process.env.NODE_ENV === 'development' ? otp : 'hidden'}`);
 
     // Send email
     try {
       await sendOTPEmail(email, otp);
-      console.log(`📧 OTP sent to ${email}`);
+      console.log(`✅ OTP email sent successfully to ${email}`);
+      
+      res.json({
+        success: true,
+        message: 'OTP sent successfully to your email',
+        // Only show OTP in development
+        devOtp: process.env.NODE_ENV === 'development' ? otp : undefined
+      });
     } catch (emailError) {
-      console.error('Email sending error:', emailError);
-      // If email fails, still return success but log error
+      console.error('❌ Failed to send OTP email:', emailError);
+      
+      // Check for specific Gmail errors
+      if (emailError.code === 'EAUTH') {
+        return res.status(500).json({
+          success: false,
+          message: 'Email authentication failed. Please check your email settings.'
+        });
+      }
+      
+      if (emailError.code === 'ESOCKET' || emailError.message.includes('ENETUNREACH')) {
+        return res.status(500).json({
+          success: false,
+          message: 'Cannot connect to email server. Please try again later or contact support.'
+        });
+      }
+      
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send OTP email. Please try again.'
+      });
     }
-
-    // For development, return OTP in response
-    res.json({
-      success: true,
-      message: 'OTP sent successfully',
-      // Remove this in production!
-      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined
-    });
 
   } catch (error) {
     console.error('❌ Forgot password error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Server error' 
+      message: 'Server error. Please try again.' 
     });
   }
 });
