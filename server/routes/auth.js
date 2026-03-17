@@ -2,10 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { Resend } = require('resend');
-
-// Initialize Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
+const axios = require('axios');
 
 // Store OTPs temporarily
 const otpStore = new Map();
@@ -34,21 +31,26 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send OTP via Resend
+// Send OTP via EmailJS - Works for ALL users (free)
 async function sendOtpEmail(toEmail, otp, username = 'User') {
   try {
     console.log('\n📧 Sending OTP email to:', toEmail);
     console.log('🔑 OTP:', otp);
     console.log('👤 Username:', username);
 
-    if (!process.env.RESEND_API_KEY) {
-      console.error('❌ Resend API key missing!');
+    // Check EmailJS configuration
+    if (!process.env.EMAILJS_SERVICE_ID || 
+        !process.env.EMAILJS_TEMPLATE_ID || 
+        !process.env.EMAILJS_PUBLIC_KEY || 
+        !process.env.EMAILJS_PRIVATE_KEY) {
+      console.error('❌ EmailJS configuration missing!');
       return {
         success: false,
         error: 'Email service not configured properly'
       };
     }
 
+    // Beautiful HTML email template
     const htmlContent = `
       <!DOCTYPE html>
       <html>
@@ -58,74 +60,116 @@ async function sendOtpEmail(toEmail, otp, username = 'User') {
         <title>Password Reset OTP</title>
         <style>
           body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             line-height: 1.6;
             color: #333;
             margin: 0;
             padding: 0;
-            background-color: #f4f4f4;
+            background-color: #f9fafb;
           }
           .container {
             max-width: 600px;
             margin: 20px auto;
             background: white;
-            border-radius: 10px;
+            border-radius: 16px;
             overflow: hidden;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
           }
           .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 30px;
+            padding: 40px 30px;
             text-align: center;
           }
           .header h1 {
             margin: 0;
             color: white;
             font-size: 28px;
+            font-weight: 600;
+          }
+          .header p {
+            color: rgba(255, 255, 255, 0.9);
+            margin: 10px 0 0;
+            font-size: 16px;
           }
           .content {
             padding: 40px 30px;
             background: white;
           }
-          .otp-code {
-            background: #f8f9fa;
-            padding: 20px;
+          .greeting {
+            font-size: 18px;
+            margin-bottom: 20px;
+          }
+          .otp-container {
+            background: #f3f4f6;
+            padding: 30px;
             text-align: center;
-            border-radius: 8px;
-            margin: 20px 0;
+            border-radius: 12px;
+            margin: 30px 0;
             border: 2px dashed #667eea;
           }
-          .otp-code h2 {
-            margin: 0;
-            color: #667eea;
+          .otp-code {
+            font-family: 'Courier New', monospace;
             font-size: 48px;
-            letter-spacing: 10px;
             font-weight: bold;
+            color: #667eea;
+            letter-spacing: 8px;
+            margin: 20px 0;
+            word-break: break-all;
           }
-          .warning {
+          .warning-box {
             background: #fff3cd;
             border: 1px solid #ffeeba;
             color: #856404;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 30px 0;
             font-size: 14px;
           }
-          .footer {
-            background: #f8f9fa;
-            padding: 20px;
-            text-align: center;
-            color: #666;
-            font-size: 12px;
+          .warning-box strong {
+            color: #856404;
           }
           .button {
             display: inline-block;
-            padding: 12px 24px;
             background: #667eea;
             color: white;
             text-decoration: none;
-            border-radius: 5px;
-            margin: 10px 0;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-weight: 600;
+            margin: 20px 0;
+          }
+          .footer {
+            background: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            color: #6b7280;
+            font-size: 14px;
+            border-top: 1px solid #e5e7eb;
+          }
+          .footer a {
+            color: #667eea;
+            text-decoration: none;
+          }
+          .divider {
+            height: 1px;
+            background: #e5e7eb;
+            margin: 20px 0;
+          }
+          @media only screen and (max-width: 600px) {
+            .container {
+              margin: 10px;
+              border-radius: 12px;
+            }
+            .header {
+              padding: 30px 20px;
+            }
+            .content {
+              padding: 30px 20px;
+            }
+            .otp-code {
+              font-size: 36px;
+              letter-spacing: 4px;
+            }
           }
         </style>
       </head>
@@ -133,56 +177,105 @@ async function sendOtpEmail(toEmail, otp, username = 'User') {
         <div class="container">
           <div class="header">
             <h1>🔐 Password Reset Request</h1>
+            <p>My Secret Diary</p>
           </div>
+          
           <div class="content">
-            <p>Hello <strong>${username}</strong>,</p>
-            <p>We received a request to reset your password for your My Secret Diary account.</p>
-            
-            <div class="otp-code">
-              <p style="margin-bottom: 10px;">Your verification code is:</p>
-              <h2>${otp}</h2>
+            <div class="greeting">
+              <p>Hello <strong>${username}</strong>,</p>
+              <p>We received a request to reset your password for your My Secret Diary account. Use the verification code below to complete the process.</p>
             </div>
             
-            <div class="warning">
-              ⚠️ This code will expire in <strong>10 minutes</strong>. 
-              Do not share this code with anyone.
+            <div class="otp-container">
+              <p style="margin: 0 0 10px; color: #6b7280;">Your verification code is:</p>
+              <div class="otp-code">${otp}</div>
+              <p style="margin: 10px 0 0; color: #6b7280; font-size: 14px;">Enter this code on the password reset page</p>
             </div>
             
-            <p>If you didn't request this password reset, please ignore this email or contact support if you have concerns.</p>
+            <div class="warning-box">
+              <strong>⚠️ Important:</strong>
+              <ul style="margin: 10px 0 0; padding-left: 20px;">
+                <li>This code will expire in <strong>10 minutes</strong></li>
+                <li>Never share this code with anyone</li>
+                <li>Our team will never ask for this code</li>
+              </ul>
+            </div>
             
-            <p>Best regards,<br><strong>My Secret Diary Team</strong></p>
+            <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin: 30px 0;">
+              <p style="margin: 0 0 10px; font-weight: 600;">Didn't request this?</p>
+              <p style="margin: 0; color: #6b7280; font-size: 14px;">
+                If you didn't request a password reset, please ignore this email or 
+                <a href="mailto:support@mysecretdiary.com" style="color: #667eea;">contact support</a> 
+                if you have concerns about your account security.
+              </p>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <p style="color: #6b7280; font-size: 14px; margin: 0;">
+              This is an automated message from My Secret Diary. Please do not reply to this email.
+            </p>
           </div>
+          
           <div class="footer">
-            <p>© ${new Date().getFullYear()} My Secret Diary. All rights reserved.</p>
-            <p>This is an automated message, please do not reply to this email.</p>
+            <p style="margin: 0 0 10px;">© ${new Date().getFullYear()} My Secret Diary. All rights reserved.</p>
+            <p style="margin: 0; font-size: 12px;">
+              <a href="#">Privacy Policy</a> • 
+              <a href="#">Terms of Service</a> • 
+              <a href="#">Contact Support</a>
+            </p>
           </div>
         </div>
       </body>
       </html>
     `;
 
-    const { data, error } = await resend.emails.send({
-      from: 'My Secret Diary <onboarding@resend.dev>',
-      to: [toEmail],
-      subject: '🔐 Password Reset OTP - My Secret Diary',
-      html: htmlContent
-    });
+    // EmailJS template parameters
+    const templateParams = {
+      email: toEmail,
+      name: username,
+      otp: otp,
+      html: htmlContent, // Send the HTML content
+      reply_to: 'noreply@mysecretdiary.com'
+    };
 
-    if (error) {
-      console.error('❌ Resend error:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
+    const payload = {
+      service_id: process.env.EMAILJS_SERVICE_ID,
+      template_id: process.env.EMAILJS_TEMPLATE_ID,
+      user_id: process.env.EMAILJS_PUBLIC_KEY,
+      accessToken: process.env.EMAILJS_PRIVATE_KEY,
+      template_params: templateParams
+    };
 
-    console.log('✅ Resend Response:', data);
-    return { success: true, data };
+    console.log('📤 Sending request to EmailJS...');
+    
+    const response = await axios.post(
+      'https://api.emailjs.com/api/v1.0/email/send',
+      payload,
+      {
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': process.env.CLIENT_URL || 'https://my-secret-diary-pro.vercel.app'
+        }
+      }
+    );
+
+    console.log('✅ EmailJS Response:', response.data);
+    return { success: true, data: response.data };
   } catch (error) {
-    console.error('❌ Email sending error:', error);
+    console.error('❌ EmailJS Error Details:');
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error('Data:', error.response.data);
+    } else if (error.request) {
+      console.error('No response received');
+    } else {
+      console.error('Error:', error.message);
+    }
     return {
       success: false,
-      error: error.message
+      error: error.response?.data || error.message
     };
   }
 }
@@ -351,6 +444,7 @@ router.post('/forgot-password', async (req, res) => {
 
     const user = await User.findOne({ email: trimmedEmail });
     
+    // For security, always return success even if user doesn't exist
     if (!user) {
       console.log('User not found, but returning success for security');
       return res.json({ 
@@ -359,6 +453,7 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
+    // Check rate limiting (prevent spam)
     const existingOTP = otpStore.get(trimmedEmail);
     if (existingOTP && existingOTP.createdAt > Date.now() - 60000) {
       return res.status(429).json({ 
@@ -393,8 +488,7 @@ router.post('/forgot-password', async (req, res) => {
       console.error('❌ Failed to send OTP email:', emailResult.error);
       res.status(500).json({
         success: false,
-        message: 'Failed to send OTP. Please try again.',
-        error: process.env.NODE_ENV === 'development' ? emailResult.error : undefined
+        message: 'Failed to send OTP. Please try again.'
       });
     }
   } catch (error) {
