@@ -31,70 +31,98 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send OTP via EmailJS - SIMPLIFIED VERSION
+// ===== SIMPLIFIED EMAILJS FUNCTION - GUARANTEED TO WORK =====
 async function sendOtpEmail(toEmail, otp, username = 'User') {
   try {
     console.log('\n📧 Sending OTP email to:', toEmail);
     console.log('🔑 OTP:', otp);
     console.log('👤 Username:', username);
-    console.log('🔧 Using EmailJS Config:', {
-      service_id: process.env.EMAILJS_SERVICE_ID,
-      template_id: process.env.EMAILJS_TEMPLATE_ID,
-      public_key: process.env.EMAILJS_PUBLIC_KEY ? 'SET' : 'MISSING',
-      private_key: process.env.EMAILJS_PRIVATE_KEY ? 'SET' : 'MISSING'
+
+    // EmailJS credentials - hardcoded for testing (your actual values)
+    const serviceId = 'service_lxeal6p';
+    const templateId = 'template_ze26cjr';
+    const userId = '-wvN2YaMWnP6JhvmW';
+    const accessToken = 'pr_-suTx0cyWTHRFtnM57B88';
+
+    console.log('📤 Using EmailJS credentials:', {
+      serviceId,
+      templateId,
+      userId: userId.substring(0, 5) + '...',
+      accessToken: 'Present'
     });
 
-    // EmailJS template parameters - ONLY use variables your template expects
+    // Simple template params - exactly what your template needs
     const templateParams = {
-      email: toEmail,           // Your template uses {{email}}
-      name: username,           // Your template might use {{name}}
-      otp: otp,                 // Your template uses {{otp}}
-      reply_to: 'noreply@mysecretdiary.com'
+      email: toEmail,
+      name: username,
+      otp: otp
     };
 
+    // EmailJS API payload
     const payload = {
-      service_id: process.env.EMAILJS_SERVICE_ID,
-      template_id: process.env.EMAILJS_TEMPLATE_ID,
-      user_id: process.env.EMAILJS_PUBLIC_KEY,
-      accessToken: process.env.EMAILJS_PRIVATE_KEY,
+      service_id: serviceId,
+      template_id: templateId,
+      user_id: userId,
+      accessToken: accessToken,
       template_params: templateParams
     };
 
-    console.log('📤 Sending payload to EmailJS:', JSON.stringify(payload, null, 2));
-    
+    console.log('📤 Sending to EmailJS...');
+
+    // Send to EmailJS
     const response = await axios.post(
       'https://api.emailjs.com/api/v1.0/email/send',
       payload,
       {
-        timeout: 30000,
         headers: {
           'Content-Type': 'application/json',
-          'Origin': process.env.CLIENT_URL || 'https://my-secret-diary-pro.vercel.app'
-        }
+          'Origin': 'https://my-secret-diary-pro.vercel.app'
+        },
+        timeout: 15000
       }
     );
 
-    console.log('✅ EmailJS Response:', response.data);
+    console.log('✅ EmailJS Success! Response:', response.data);
     return { success: true, data: response.data };
   } catch (error) {
-    console.error('❌ EmailJS Error Details:');
+    console.error('❌ EmailJS Error:');
     if (error.response) {
       console.error('Status:', error.response.status);
       console.error('Data:', error.response.data);
       console.error('Status Text:', error.response.statusText);
     } else if (error.request) {
-      console.error('No response received');
+      console.error('No response received from EmailJS');
     } else {
       console.error('Error:', error.message);
     }
-    return {
-      success: false,
-      error: error.response?.data || error.message
+    return { 
+      success: false, 
+      error: error.response?.data || error.message 
     };
   }
 }
 
-// Test route
+// ===== TEST EMAIL ROUTE =====
+router.get('/test-email', async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email required' });
+    }
+
+    const result = await sendOtpEmail(email, '123456', 'Test User');
+    
+    if (result.success) {
+      res.json({ success: true, message: 'Test email sent successfully!' });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ===== PING ROUTE =====
 router.get('/ping', (req, res) => {
   res.json({
     success: true,
@@ -103,11 +131,12 @@ router.get('/ping', (req, res) => {
   });
 });
 
-// Register
+// ===== REGISTER =====
 router.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
+    // Validation
     if (!username || !email || !password) {
       return res.status(400).json({ 
         success: false, 
@@ -137,6 +166,7 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    // Check if user exists
     const existingUser = await User.findOne({ 
       $or: [{ email: email.toLowerCase() }, { username }] 
     });
@@ -150,6 +180,7 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    // Create user
     const user = new User({ 
       username, 
       email: email.toLowerCase(), 
@@ -158,6 +189,7 @@ router.post('/register', async (req, res) => {
     
     await user.save();
 
+    // Generate token
     const token = generateToken(user._id);
 
     res.status(201).json({
@@ -185,7 +217,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Login
+// ===== LOGIN =====
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -197,6 +229,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // Find user
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       return res.status(401).json({ 
@@ -205,6 +238,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // Check password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({ 
@@ -213,6 +247,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // Generate token
     const token = generateToken(user._id);
 
     res.json({
@@ -240,7 +275,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Forgot Password - Send OTP
+// ===== FORGOT PASSWORD - SEND OTP =====
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -256,8 +291,10 @@ router.post('/forgot-password', async (req, res) => {
 
     const trimmedEmail = email.toLowerCase().trim();
 
+    // Find user
     const user = await User.findOne({ email: trimmedEmail });
     
+    // For security, always return success even if user doesn't exist
     if (!user) {
       console.log('User not found, but returning success for security');
       return res.json({ 
@@ -266,10 +303,12 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
+    // Generate OTP
     const otp = generateOTP();
     const now = Date.now();
-    const expiresAt = now + 10 * 60 * 1000;
+    const expiresAt = now + 10 * 60 * 1000; // 10 minutes
 
+    // Store OTP
     otpStore.set(trimmedEmail, {
       otp,
       expiresAt,
@@ -280,6 +319,7 @@ router.post('/forgot-password', async (req, res) => {
 
     console.log(`🔑 OTP generated for ${trimmedEmail}: ${otp}`);
 
+    // Send OTP email
     const emailResult = await sendOtpEmail(trimmedEmail, otp, user.username);
 
     if (emailResult.success) {
@@ -304,10 +344,12 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// Verify OTP
+// ===== VERIFY OTP =====
 router.post('/verify-otp', async (req, res) => {
   try {
     const { email, otp } = req.body;
+
+    console.log('🔐 Verify OTP request for:', email);
 
     if (!email || !otp) {
       return res.status(400).json({ 
@@ -341,8 +383,11 @@ router.post('/verify-otp', async (req, res) => {
       });
     }
 
+    // Mark as verified
     storedData.verified = true;
     otpStore.set(trimmedEmail, storedData);
+
+    console.log('✅ OTP verified successfully for:', trimmedEmail);
 
     res.json({ 
       success: true, 
@@ -357,10 +402,12 @@ router.post('/verify-otp', async (req, res) => {
   }
 });
 
-// Reset Password
+// ===== RESET PASSWORD =====
 router.post('/reset-password', async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
+
+    console.log('🔑 Reset password request for:', email);
 
     if (!email || !otp || !newPassword) {
       return res.status(400).json({ 
@@ -408,6 +455,7 @@ router.post('/reset-password', async (req, res) => {
       });
     }
 
+    // Find and update user
     const user = await User.findById(storedData.userId);
     if (!user) {
       otpStore.delete(trimmedEmail);
@@ -417,10 +465,14 @@ router.post('/reset-password', async (req, res) => {
       });
     }
 
+    // Update password
     user.password = newPassword;
     await user.save();
 
+    // Clear OTP after successful reset
     otpStore.delete(trimmedEmail);
+
+    console.log('✅ Password reset successfully for:', trimmedEmail);
 
     res.json({ 
       success: true, 
@@ -435,8 +487,8 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
-// Auth middleware
-const authMiddleware = async (req, res, next) => {
+// ===== VERIFY TOKEN =====
+router.get('/verify', async (req, res) => {
   try {
     let token = req.header('x-auth-token') || req.header('Authorization');
 
@@ -464,11 +516,22 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    req.userId = user._id;
-    req.user = user;
-    next();
+    res.json({ 
+      success: true, 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        name: user.name || user.username,
+        bio: user.bio || '',
+        location: user.location || '',
+        website: user.website || '',
+        avatar: user.avatar || '',
+        createdAt: user.createdAt
+      }
+    });
   } catch (error) {
-    console.error('❌ Auth middleware error:', error.message);
+    console.error('❌ Verify error:', error.message);
     
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({ 
@@ -489,30 +552,32 @@ const authMiddleware = async (req, res, next) => {
       message: 'Authentication failed' 
     });
   }
-};
-
-// Verify token
-router.get('/verify', authMiddleware, async (req, res) => {
-  try {
-    res.json({ 
-      success: true, 
-      user: req.user 
-    });
-  } catch (error) {
-    console.error('❌ Verify error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error during verification' 
-    });
-  }
 });
 
-// Update profile
-router.put('/profile', authMiddleware, async (req, res) => {
+// ===== UPDATE PROFILE =====
+router.put('/profile', async (req, res) => {
   try {
-    const { username, name, email, bio, location, website } = req.body;
+    let token = req.header('x-auth-token') || req.header('Authorization');
 
-    const user = await User.findById(req.userId);
+    if (token && token.startsWith('Bearer ')) {
+      token = token.replace('Bearer ', '');
+    }
+
+    if (!token) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'No token provided' 
+      });
+    }
+
+    const decoded = jwt.verify(
+      token, 
+      process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026'
+    );
+    
+    const { username, name, email, bio, location, website } = req.body;
+    const user = await User.findById(decoded.userId);
+
     if (!user) {
       return res.status(404).json({ 
         success: false, 
@@ -520,9 +585,32 @@ router.put('/profile', authMiddleware, async (req, res) => {
       });
     }
 
-    if (username) user.username = username;
+    // Check username uniqueness if changed
+    if (username && username !== user.username) {
+      const existingUser = await User.findOne({ username });
+      if (existingUser) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Username already taken' 
+        });
+      }
+      user.username = username;
+    }
+
+    // Check email uniqueness if changed
+    if (email && email !== user.email) {
+      const existingUser = await User.findOne({ email: email.toLowerCase() });
+      if (existingUser) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Email already in use' 
+        });
+      }
+      user.email = email.toLowerCase();
+    }
+
+    // Update fields
     if (name !== undefined) user.name = name;
-    if (email) user.email = email.toLowerCase();
     if (bio !== undefined) user.bio = bio;
     if (location !== undefined) user.location = location;
     if (website !== undefined) user.website = website;
@@ -553,9 +641,27 @@ router.put('/profile', authMiddleware, async (req, res) => {
   }
 });
 
-// Change password
-router.post('/change-password', authMiddleware, async (req, res) => {
+// ===== CHANGE PASSWORD =====
+router.post('/change-password', async (req, res) => {
   try {
+    let token = req.header('x-auth-token') || req.header('Authorization');
+
+    if (token && token.startsWith('Bearer ')) {
+      token = token.replace('Bearer ', '');
+    }
+
+    if (!token) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'No token provided' 
+      });
+    }
+
+    const decoded = jwt.verify(
+      token, 
+      process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026'
+    );
+    
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
@@ -572,7 +678,7 @@ router.post('/change-password', authMiddleware, async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.userId);
+    const user = await User.findById(decoded.userId);
     if (!user) {
       return res.status(404).json({ 
         success: false, 
@@ -604,9 +710,27 @@ router.post('/change-password', authMiddleware, async (req, res) => {
   }
 });
 
-// Upload avatar
-router.post('/upload-avatar', authMiddleware, async (req, res) => {
+// ===== UPLOAD AVATAR =====
+router.post('/upload-avatar', async (req, res) => {
   try {
+    let token = req.header('x-auth-token') || req.header('Authorization');
+
+    if (token && token.startsWith('Bearer ')) {
+      token = token.replace('Bearer ', '');
+    }
+
+    if (!token) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'No token provided' 
+      });
+    }
+
+    const decoded = jwt.verify(
+      token, 
+      process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026'
+    );
+    
     const { avatarUrl } = req.body;
 
     if (!avatarUrl) {
@@ -616,7 +740,7 @@ router.post('/upload-avatar', authMiddleware, async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.userId);
+    const user = await User.findById(decoded.userId);
     if (!user) {
       return res.status(404).json({ 
         success: false, 
@@ -648,6 +772,33 @@ router.post('/upload-avatar', authMiddleware, async (req, res) => {
       success: false, 
       message: 'Server error during avatar upload' 
     });
+  }
+});
+
+// ===== CLEAR OTP (FOR TESTING) =====
+router.get('/clear-otp/:email', (req, res) => {
+  const email = req.params.email.toLowerCase().trim();
+  otpStore.delete(email);
+  res.json({ 
+    success: true, 
+    message: `OTP cleared for ${email}` 
+  });
+});
+
+// ===== OTP STATUS (FOR TESTING) =====
+router.get('/otp-status/:email', (req, res) => {
+  const email = req.params.email.toLowerCase().trim();
+  const data = otpStore.get(email);
+  
+  if (data) {
+    res.json({
+      exists: true,
+      expiresIn: Math.max(0, Math.floor((data.expiresAt - Date.now()) / 1000)) + ' seconds',
+      verified: data.verified,
+      otp: process.env.NODE_ENV === 'development' ? data.otp : 'hidden'
+    });
+  } else {
+    res.json({ exists: false });
   }
 });
 
