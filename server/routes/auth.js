@@ -2,7 +2,10 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const axios = require('axios');
+const { Resend } = require('resend');
+
+// Initialize Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Store OTPs temporarily
 const otpStore = new Map();
@@ -31,67 +34,155 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send OTP via EmailJS
+// Send OTP via Resend
 async function sendOtpEmail(toEmail, otp, username = 'User') {
   try {
     console.log('\n📧 Sending OTP email to:', toEmail);
     console.log('🔑 OTP:', otp);
+    console.log('👤 Username:', username);
 
-    if (!process.env.EMAILJS_SERVICE_ID || 
-        !process.env.EMAILJS_TEMPLATE_ID || 
-        !process.env.EMAILJS_PUBLIC_KEY || 
-        !process.env.EMAILJS_PRIVATE_KEY) {
-      console.error('❌ EmailJS configuration missing!');
+    if (!process.env.RESEND_API_KEY) {
+      console.error('❌ Resend API key missing!');
       return {
         success: false,
         error: 'Email service not configured properly'
       };
     }
 
-    const templateParams = {
-      email: toEmail,
-      name: username,
-      otp: otp,
-      reply_to: 'noreply@mysecretdiary.com'
-    };
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Password Reset OTP</title>
+        <style>
+          body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+          }
+          .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          }
+          .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 30px;
+            text-align: center;
+          }
+          .header h1 {
+            margin: 0;
+            color: white;
+            font-size: 28px;
+          }
+          .content {
+            padding: 40px 30px;
+            background: white;
+          }
+          .otp-code {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 2px dashed #667eea;
+          }
+          .otp-code h2 {
+            margin: 0;
+            color: #667eea;
+            font-size: 48px;
+            letter-spacing: 10px;
+            font-weight: bold;
+          }
+          .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-size: 14px;
+          }
+          .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+          }
+          .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 0;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔐 Password Reset Request</h1>
+          </div>
+          <div class="content">
+            <p>Hello <strong>${username}</strong>,</p>
+            <p>We received a request to reset your password for your My Secret Diary account.</p>
+            
+            <div class="otp-code">
+              <p style="margin-bottom: 10px;">Your verification code is:</p>
+              <h2>${otp}</h2>
+            </div>
+            
+            <div class="warning">
+              ⚠️ This code will expire in <strong>10 minutes</strong>. 
+              Do not share this code with anyone.
+            </div>
+            
+            <p>If you didn't request this password reset, please ignore this email or contact support if you have concerns.</p>
+            
+            <p>Best regards,<br><strong>My Secret Diary Team</strong></p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} My Secret Diary. All rights reserved.</p>
+            <p>This is an automated message, please do not reply to this email.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
 
-    const payload = {
-      service_id: process.env.EMAILJS_SERVICE_ID,
-      template_id: process.env.EMAILJS_TEMPLATE_ID,
-      user_id: process.env.EMAILJS_PUBLIC_KEY,
-      accessToken: process.env.EMAILJS_PRIVATE_KEY,
-      template_params: templateParams
-    };
+    const { data, error } = await resend.emails.send({
+      from: 'My Secret Diary <onboarding@resend.dev>',
+      to: [toEmail],
+      subject: '🔐 Password Reset OTP - My Secret Diary',
+      html: htmlContent
+    });
 
-    console.log('📤 Sending request to EmailJS...');
-    
-    const response = await axios.post(
-      'https://api.emailjs.com/api/v1.0/email/send',
-      payload,
-      {
-        timeout: 30000,
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': process.env.CLIENT_URL || 'https://my-secret-diary-pro.vercel.app'
-        }
-      }
-    );
-
-    console.log('✅ EmailJS Response:', response.data);
-    return { success: true, data: response.data };
-  } catch (error) {
-    console.error('❌ EmailJS Error Details:');
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error('Data:', error.response.data);
-    } else if (error.request) {
-      console.error('No response received');
-    } else {
-      console.error('Error:', error.message);
+    if (error) {
+      console.error('❌ Resend error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
+
+    console.log('✅ Resend Response:', data);
+    return { success: true, data };
+  } catch (error) {
+    console.error('❌ Email sending error:', error);
     return {
       success: false,
-      error: error.response?.data || error.message
+      error: error.message
     };
   }
 }
@@ -302,7 +393,8 @@ router.post('/forgot-password', async (req, res) => {
       console.error('❌ Failed to send OTP email:', emailResult.error);
       res.status(500).json({
         success: false,
-        message: 'Failed to send OTP. Please try again.'
+        message: 'Failed to send OTP. Please try again.',
+        error: process.env.NODE_ENV === 'development' ? emailResult.error : undefined
       });
     }
   } catch (error) {

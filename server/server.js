@@ -21,12 +21,13 @@ if (fs.existsSync(path.join(__dirname, '.env.local'))) {
 // Set consistent JWT secret
 const JWT_SECRET = process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026';
 
-// Verify EmailJS keys are loaded (DEBUGGING)
-console.log('\n📧 EmailJS Configuration Status:');
-console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ ' + process.env.EMAILJS_SERVICE_ID : '❌ Missing'}`);
-console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ ' + process.env.EMAILJS_TEMPLATE_ID : '❌ Missing'}`);
-console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ ' + process.env.EMAILJS_PUBLIC_KEY.substring(0, 10) + '...' : '❌ Missing'}`);
-console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Present' : '❌ Missing'}`);
+// Log environment variables status
+console.log('\n🔍 Environment Variables Status:');
+console.log(`   - NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+console.log(`   - MONGODB_URI: ${process.env.MONGODB_URI ? '✅ Set' : '❌ Missing'}`);
+console.log(`   - RESEND_API_KEY: ${process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing'}`);
+console.log(`   - CLIENT_URL: ${process.env.CLIENT_URL || '❌ Missing'}`);
+console.log(`   - CLOUDINARY_NAME: ${process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing'}`);
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -35,16 +36,19 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
-const axios = require('axios');
+const { Resend } = require('resend');
+
+// Initialize Resend with your API key
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 
-// ===== CORS CONFIGURATION with your actual URLs =====
+// ===== CORS CONFIGURATION =====
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
-  'https://my-secret-diary-pro.vercel.app',           // Your Vercel frontend
-  'https://mysecretdiarypro.onrender.com'             // Your Render backend
+  'https://my-secret-diary-pro.vercel.app',
+  'https://mysecretdiarypro.onrender.com'
 ];
 
 app.use(cors({
@@ -98,19 +102,165 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// MongoDB Connection with retry logic
+// ===== DEBUG ENV ROUTE =====
+app.get('/api/debug-env', (req, res) => {
+  res.json({
+    success: true,
+    environment: process.env.NODE_ENV || 'development',
+    resend_api_key: process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing',
+    mongodb_uri: process.env.MONGODB_URI ? '✅ Set' : '❌ Missing',
+    client_url: process.env.CLIENT_URL || '❌ Missing',
+    cloudinary: process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing',
+    jwt_secret: process.env.JWT_SECRET ? '✅ Set' : '❌ Missing'
+  });
+});
+
+// ===== TEST RESEND ROUTE =====
+app.get('/api/test-resend', async (req, res) => {
+  try {
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required. Use ?email=your@email.com' 
+      });
+    }
+
+    console.log('\n🧪 Testing Resend with email:', email);
+
+    if (!process.env.RESEND_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: 'Resend API key is missing'
+      });
+    }
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Test Email</title>
+        <style>
+          body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+          }
+          .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          }
+          .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 30px;
+            text-align: center;
+          }
+          .header h1 {
+            margin: 0;
+            color: white;
+            font-size: 28px;
+          }
+          .content {
+            padding: 40px 30px;
+            background: white;
+          }
+          .success-badge {
+            background: #10b981;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: inline-block;
+            margin-bottom: 20px;
+          }
+          .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>✅ My Secret Diary</h1>
+          </div>
+          <div class="content">
+            <div class="success-badge">Test Email</div>
+            <h2>Hello!</h2>
+            <p>This is a test email from your My Secret Diary application.</p>
+            <p>If you received this, Resend is working correctly!</p>
+            <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0; font-size: 18px;">Your test OTP would be:</p>
+              <h2 style="color: #667eea; font-size: 48px; letter-spacing: 10px; margin: 10px 0;">123456</h2>
+            </div>
+            <hr>
+            <p style="color: #666;">This is an automated message, please do not reply.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} My Secret Diary. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const { data, error } = await resend.emails.send({
+      from: 'My Secret Diary <onboarding@resend.dev>',
+      to: [email],
+      subject: '✅ Test Email from My Secret Diary',
+      html: htmlContent
+    });
+
+    if (error) {
+      console.error('❌ Resend error:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+
+    console.log('✅ Resend Response:', data);
+    res.json({ 
+      success: true, 
+      message: '✅ Test email sent successfully! Check your inbox.',
+      data 
+    });
+  } catch (error) {
+    console.error('❌ Test error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ===== MongoDB Connection with retry logic =====
 const connectDB = async () => {
   try {
     if (!process.env.MONGODB_URI) {
       console.error('❌ MONGODB_URI is not defined in environment variables');
       console.error('📌 Please check your .env.local or Render environment variables');
-      process.exit(1);
+      return;
     }
 
     console.log('📡 Connecting to MongoDB...');
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
     });
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
@@ -131,168 +281,10 @@ const authRoutes = require('./routes/auth');
 // Use auth routes
 app.use('/api/auth', authRoutes);
 
-// ===== TEST ENV ROUTE =====
-app.get('/api/test-env', (req, res) => {
-  res.json({
-    message: 'Environment variables status',
-    using_file: fs.existsSync(path.join(__dirname, '.env.local')) 
-      ? '.env.local' 
-      : fs.existsSync(path.join(__dirname, '.env')) 
-        ? '.env' 
-        : 'No env file (using system env)',
-    emailjs_service_id: process.env.EMAILJS_SERVICE_ID || '❌ Missing',
-    emailjs_template_id: process.env.EMAILJS_TEMPLATE_ID || '❌ Missing',
-    emailjs_public_key: process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing',
-    emailjs_private_key: process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing',
-    mongodb_uri: process.env.MONGODB_URI ? '✅ Set' : '❌ Missing',
-    jwt_secret: process.env.JWT_SECRET ? '✅ Set' : '❌ Missing (using default)',
-    cloudinary: process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing',
-    node_env: process.env.NODE_ENV || 'development'
-  });
-});
-
-// ===== TEST EMAILJS ROUTE =====
-app.get('/api/test-email', async (req, res) => {
-  try {
-    const { email } = req.query;
-    
-    if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required. Use ?email=your@email.com' 
-      });
-    }
-
-    console.log('\n🧪 Testing EmailJS with email:', email);
-    
-    // Get environment variables
-    const serviceId = process.env.EMAILJS_SERVICE_ID;
-    const templateId = process.env.EMAILJS_TEMPLATE_ID;
-    const publicKey = process.env.EMAILJS_PUBLIC_KEY;
-    const privateKey = process.env.EMAILJS_PRIVATE_KEY;
-
-    // Validate keys
-    if (!serviceId || !templateId || !publicKey) {
-      return res.status(500).json({
-        success: false,
-        message: 'EmailJS configuration missing',
-        details: {
-          serviceId: !!serviceId,
-          templateId: !!templateId,
-          publicKey: !!publicKey,
-          privateKey: !!privateKey
-        }
-      });
-    }
-
-    // Using 'email' as the variable name (as per your template)
-    const payload = {
-      service_id: serviceId,
-      template_id: templateId,
-      user_id: publicKey,
-      accessToken: privateKey,
-      template_params: {
-        email: email,
-        name: 'Test User',
-        otp: '123456',
-        reply_to: 'noreply@mysecretdiary.com'
-      }
-    };
-
-    console.log('📤 Sending payload to EmailJS...');
-
-    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-        'Origin': process.env.CLIENT_URL || 'https://my-secret-diary-pro.vercel.app'
-      }
-    });
-
-    console.log('✅ EmailJS Response:', response.data);
-    res.json({ 
-      success: true, 
-      message: '✅ Test email sent successfully! Check your inbox.',
-      data: response.data 
-    });
-  } catch (error) {
-    console.error('❌ EmailJS Test Error:');
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error('Data:', error.response.data);
-      res.status(500).json({ 
-        success: false, 
-        error: error.response.data,
-        status: error.response.status
-      });
-    } else if (error.request) {
-      console.error('No response received');
-      res.status(500).json({ 
-        success: false, 
-        error: 'No response from EmailJS server'
-      });
-    } else {
-      console.error('Error:', error.message);
-      res.status(500).json({ 
-        success: false, 
-        error: error.message
-      });
-    }
-  }
-});
-
-// ===== TEST EMAILJS POST ROUTE =====
-app.post('/api/test-email', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
-      });
-    }
-
-    console.log('\n🧪 Testing EmailJS POST with email:', email);
-    
-    const payload = {
-      service_id: process.env.EMAILJS_SERVICE_ID,
-      template_id: process.env.EMAILJS_TEMPLATE_ID,
-      user_id: process.env.EMAILJS_PUBLIC_KEY,
-      accessToken: process.env.EMAILJS_PRIVATE_KEY,
-      template_params: {
-        email: email,
-        otp: '123456',
-        name: 'Test User',
-        reply_to: 'noreply@mysecretdiary.com'
-      }
-    };
-
-    const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-        'Origin': process.env.CLIENT_URL || 'https://my-secret-diary-pro.vercel.app'
-      }
-    });
-
-    res.json({ 
-      success: true, 
-      message: '✅ Test email sent successfully!',
-      data: response.data 
-    });
-  } catch (error) {
-    console.error('❌ POST Error:', error.response?.data || error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: error.response?.data || error.message 
-    });
-  }
-});
-
 // ================= CLOUDINARY IMAGE UPLOAD =================
 app.post('/api/upload/image', async (req, res) => {
   try {
+    // Verify token
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -305,6 +297,7 @@ app.post('/api/upload/image', async (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
+    // Use multer to handle the upload
     upload.single('image')(req, res, async function(err) {
       if (err) {
         console.error('Multer error:', err);
@@ -316,11 +309,13 @@ app.post('/api/upload/image', async (req, res) => {
       }
 
       try {
+        // Upload to Cloudinary
         const result = await cloudinary.uploader.upload(req.file.path, {
           folder: 'diary-images',
           resource_type: 'image'
         });
 
+        // Delete temporary file
         fs.unlinkSync(req.file.path);
 
         res.json({
@@ -330,6 +325,7 @@ app.post('/api/upload/image', async (req, res) => {
       } catch (cloudinaryError) {
         console.error('Cloudinary upload error:', cloudinaryError);
         
+        // Fallback to local storage if Cloudinary fails
         const localDir = "uploads/images";
         if (!fs.existsSync(localDir)) {
           fs.mkdirSync(localDir, { recursive: true });
@@ -357,6 +353,7 @@ app.post('/api/upload/image', async (req, res) => {
 // ================= CLOUDINARY VOICE UPLOAD =================
 app.post('/api/upload/voice', async (req, res) => {
   try {
+    // Verify token
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -369,6 +366,7 @@ app.post('/api/upload/voice', async (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
+    // Use multer to handle the upload
     upload.single('voice')(req, res, async function(err) {
       if (err) {
         console.error('Multer error:', err);
@@ -380,12 +378,14 @@ app.post('/api/upload/voice', async (req, res) => {
       }
 
       try {
+        // Upload to Cloudinary (voice notes are treated as video type)
         const result = await cloudinary.uploader.upload(req.file.path, {
           folder: 'voice-notes',
-          resource_type: 'video',
+          resource_type: 'video', // Cloudinary uses 'video' for audio files
           format: 'webm'
         });
 
+        // Delete temporary file
         fs.unlinkSync(req.file.path);
 
         res.json({
@@ -395,6 +395,7 @@ app.post('/api/upload/voice', async (req, res) => {
       } catch (cloudinaryError) {
         console.error('Cloudinary upload error:', cloudinaryError);
         
+        // Fallback to local storage if Cloudinary fails
         const localDir = "uploads/voices";
         if (!fs.existsSync(localDir)) {
           fs.mkdirSync(localDir, { recursive: true });
@@ -571,6 +572,7 @@ app.put('/api/diary/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Entry not found' });
     }
     
+    // Check if entry is locked and handle password
     if (entry.isLocked) {
       if (!password) {
         return res.status(403).json({ error: 'Password required to edit locked entry' });
@@ -583,6 +585,7 @@ app.put('/api/diary/:id', authMiddleware, async (req, res) => {
       }
     }
     
+    // Update entry
     entry.title = title;
     entry.content = content;
     entry.mood = mood;
@@ -744,35 +747,19 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  const envFile = fs.existsSync(path.join(__dirname, '.env.local')) 
-    ? '.env.local' 
-    : fs.existsSync(path.join(__dirname, '.env')) 
-      ? '.env' 
-      : 'System Environment Variables';
-  
   console.log(`\n✅ Server started on port ${PORT}`);
-  console.log(`📁 Environment file: ${envFile}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🌐 Local: http://localhost:${PORT}`);
   console.log(`🚀 Render URL: https://mysecretdiarypro.onrender.com`);
+  console.log(`📧 Resend API Key: ${process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing'}`);
   console.log(`📝 API Endpoints:`);
   console.log(`   - Auth: /api/auth`);
   console.log(`   - Diary: /api/diary`);
   console.log(`   - Upload Image: /api/upload/image`);
   console.log(`   - Upload Voice: /api/upload/voice`);
-  console.log(`   - Test Env: /api/test-env`);
-  console.log(`   - Test Email: /api/test-email?email=your@email.com`);
-  console.log(`☁️  Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME ? '✅ Configured' : '❌ Missing'}`);
-  console.log(`📧 EmailJS Status:`);
-  console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ ' + process.env.EMAILJS_SERVICE_ID : '❌ Missing'}`);
-  console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ ' + process.env.EMAILJS_TEMPLATE_ID : '❌ Missing'}`);
-  console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing'}`);
-  
-  if (process.env.EMAILJS_SERVICE_ID && process.env.EMAILJS_TEMPLATE_ID && process.env.EMAILJS_PUBLIC_KEY) {
-    console.log(`\n✅ EmailJS is ready! Test it now:`);
-    console.log(`   GET:  https://mysecretdiarypro.onrender.com/api/test-email?email=your@email.com`);
-  }
+  console.log(`   - Debug Env: /api/debug-env`);
+  console.log(`   - Test Resend: /api/test-resend?email=your@email.com`);
+  console.log(`   - Health: /api/health`);
 });
 
 server.on('error', (error) => {
