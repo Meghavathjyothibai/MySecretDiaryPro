@@ -235,7 +235,7 @@ async function sendOtpEmail(toEmail, otp, username = 'User') {
       email: toEmail,
       name: username,
       otp: otp,
-      html: htmlContent, // Send the HTML content
+      html: htmlContent,
       reply_to: 'noreply@mysecretdiary.com'
     };
 
@@ -426,7 +426,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Forgot Password - Send OTP
+// Forgot Password - Send OTP (NO RATE LIMITING)
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -453,7 +453,9 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
-    // Check rate limiting (prevent spam)
+    // RATE LIMITING IS DISABLED FOR TESTING
+    // You can uncomment this in production
+    /*
     const existingOTP = otpStore.get(trimmedEmail);
     if (existingOTP && existingOTP.createdAt > Date.now() - 60000) {
       return res.status(429).json({ 
@@ -461,6 +463,7 @@ router.post('/forgot-password', async (req, res) => {
         message: 'Please wait 1 minute before requesting another OTP' 
       });
     }
+    */
 
     const otp = generateOTP();
     const now = Date.now();
@@ -630,6 +633,33 @@ router.post('/reset-password', async (req, res) => {
       success: false, 
       message: 'Server error during password reset' 
     });
+  }
+});
+
+// Clear OTP for testing
+router.get('/clear-otp/:email', (req, res) => {
+  const email = req.params.email.toLowerCase().trim();
+  otpStore.delete(email);
+  res.json({ 
+    success: true, 
+    message: `OTP cleared for ${email}` 
+  });
+});
+
+// Get OTP status for debugging
+router.get('/otp-status/:email', (req, res) => {
+  const email = req.params.email.toLowerCase().trim();
+  const data = otpStore.get(email);
+  
+  if (data) {
+    res.json({
+      exists: true,
+      expiresIn: Math.max(0, Math.floor((data.expiresAt - Date.now()) / 1000)) + ' seconds',
+      verified: data.verified,
+      otp: process.env.NODE_ENV === 'development' ? data.otp : 'hidden' // Only show OTP in development
+    });
+  } else {
+    res.json({ exists: false });
   }
 });
 

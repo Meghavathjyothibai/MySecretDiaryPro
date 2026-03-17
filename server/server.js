@@ -52,7 +52,9 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc)
     if (!origin) return callback(null, true);
+    
     if (allowedOrigins.indexOf(origin) === -1) {
       console.log('❌ CORS blocked origin:', origin);
       const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
@@ -68,7 +70,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files
+// Serve static files (for local fallback)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ================= CLOUDINARY CONFIG =================
@@ -80,7 +82,7 @@ cloudinary.config({
 
 console.log('\n✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET');
 
-// ================= MULTER CONFIG =================
+// ================= MULTER CONFIG (Temporary storage) =================
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     const dir = "uploads/temp";
@@ -203,11 +205,12 @@ app.get('/api/test-email', async (req, res) => {
   }
 });
 
-// ===== MongoDB Connection =====
+// ===== MongoDB Connection with retry logic =====
 const connectDB = async () => {
   try {
     if (!process.env.MONGODB_URI) {
-      console.error('❌ MONGODB_URI is not defined');
+      console.error('❌ MONGODB_URI is not defined in environment variables');
+      console.error('📌 Please check your .env.local or Render environment variables');
       return;
     }
 
@@ -215,18 +218,23 @@ const connectDB = async () => {
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
     });
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
     console.error('❌ MongoDB connection failed:', error.message);
+    // Retry connection after 5 seconds
     setTimeout(connectDB, 5000);
   }
 };
 
 connectDB();
 
-// Import models and routes
+// Import models
 const User = require('./models/User');
+
+// Import routes
 const authRoutes = require('./routes/auth');
 
 // Use auth routes
@@ -235,6 +243,7 @@ app.use('/api/auth', authRoutes);
 // ================= CLOUDINARY IMAGE UPLOAD =================
 app.post('/api/upload/image', async (req, res) => {
   try {
+    // Verify token
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -247,6 +256,7 @@ app.post('/api/upload/image', async (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
+    // Use multer to handle the upload
     upload.single('image')(req, res, async function(err) {
       if (err) {
         console.error('Multer error:', err);
@@ -258,11 +268,13 @@ app.post('/api/upload/image', async (req, res) => {
       }
 
       try {
+        // Upload to Cloudinary
         const result = await cloudinary.uploader.upload(req.file.path, {
           folder: 'diary-images',
           resource_type: 'image'
         });
 
+        // Delete temporary file
         fs.unlinkSync(req.file.path);
 
         res.json({
@@ -272,6 +284,7 @@ app.post('/api/upload/image', async (req, res) => {
       } catch (cloudinaryError) {
         console.error('Cloudinary upload error:', cloudinaryError);
         
+        // Fallback to local storage if Cloudinary fails
         const localDir = "uploads/images";
         if (!fs.existsSync(localDir)) {
           fs.mkdirSync(localDir, { recursive: true });
@@ -299,6 +312,7 @@ app.post('/api/upload/image', async (req, res) => {
 // ================= CLOUDINARY VOICE UPLOAD =================
 app.post('/api/upload/voice', async (req, res) => {
   try {
+    // Verify token
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -311,6 +325,7 @@ app.post('/api/upload/voice', async (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
+    // Use multer to handle the upload
     upload.single('voice')(req, res, async function(err) {
       if (err) {
         console.error('Multer error:', err);
@@ -322,12 +337,14 @@ app.post('/api/upload/voice', async (req, res) => {
       }
 
       try {
+        // Upload to Cloudinary (voice notes are treated as video type)
         const result = await cloudinary.uploader.upload(req.file.path, {
           folder: 'voice-notes',
-          resource_type: 'video',
+          resource_type: 'video', // Cloudinary uses 'video' for audio files
           format: 'webm'
         });
 
+        // Delete temporary file
         fs.unlinkSync(req.file.path);
 
         res.json({
@@ -337,6 +354,7 @@ app.post('/api/upload/voice', async (req, res) => {
       } catch (cloudinaryError) {
         console.error('Cloudinary upload error:', cloudinaryError);
         
+        // Fallback to local storage if Cloudinary fails
         const localDir = "uploads/voices";
         if (!fs.existsSync(localDir)) {
           fs.mkdirSync(localDir, { recursive: true });
@@ -513,6 +531,7 @@ app.put('/api/diary/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Entry not found' });
     }
     
+    // Check if entry is locked and handle password
     if (entry.isLocked) {
       if (!password) {
         return res.status(403).json({ error: 'Password required to edit locked entry' });
@@ -525,6 +544,7 @@ app.put('/api/diary/:id', authMiddleware, async (req, res) => {
       }
     }
     
+    // Update entry
     entry.title = title;
     entry.content = content;
     entry.mood = mood;
@@ -695,6 +715,14 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ Set' : '❌ Missing'}`);
   console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing'}`);
   console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing'}`);
+  console.log(`📝 API Endpoints:`);
+  console.log(`   - Auth: /api/auth`);
+  console.log(`   - Diary: /api/diary`);
+  console.log(`   - Upload Image: /api/upload/image`);
+  console.log(`   - Upload Voice: /api/upload/voice`);
+  console.log(`   - Debug Env: /api/debug-env`);
+  console.log(`   - Test Email: /api/test-email?email=your@email.com`);
+  console.log(`   - Health: /api/health`);
 });
 
 server.on('error', (error) => {
