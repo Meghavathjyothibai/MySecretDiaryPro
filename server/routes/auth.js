@@ -2,7 +2,10 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const axios = require('axios');
+const { Resend } = require('resend');
+
+// Initialize Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Store OTPs temporarily
 const otpStore = new Map();
@@ -31,98 +34,160 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// ===== SIMPLIFIED EMAILJS FUNCTION - GUARANTEED TO WORK =====
+// Send OTP via Resend
 async function sendOtpEmail(toEmail, otp, username = 'User') {
   try {
     console.log('\n📧 Sending OTP email to:', toEmail);
     console.log('🔑 OTP:', otp);
     console.log('👤 Username:', username);
 
-    // EmailJS credentials - hardcoded for testing (your actual values)
-    const serviceId = 'service_lxeal6p';
-    const templateId = 'template_ze26cjr';
-    const userId = '-wvN2YaMWnP6JhvmW';
-    const accessToken = 'pr_-suTx0cyWTHRFtnM57B88';
+    if (!process.env.RESEND_API_KEY) {
+      console.error('❌ Resend API key missing!');
+      return {
+        success: false,
+        error: 'Email service not configured properly'
+      };
+    }
 
-    console.log('📤 Using EmailJS credentials:', {
-      serviceId,
-      templateId,
-      userId: userId.substring(0, 5) + '...',
-      accessToken: 'Present'
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Password Reset OTP</title>
+        <style>
+          body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+          }
+          .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          }
+          .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 30px;
+            text-align: center;
+          }
+          .header h1 {
+            margin: 0;
+            color: white;
+            font-size: 28px;
+          }
+          .content {
+            padding: 40px 30px;
+            background: white;
+          }
+          .otp-code {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 2px dashed #667eea;
+          }
+          .otp-code h2 {
+            margin: 0;
+            color: #667eea;
+            font-size: 48px;
+            letter-spacing: 10px;
+            font-weight: bold;
+          }
+          .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-size: 14px;
+          }
+          .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+          }
+          .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 0;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔐 Password Reset Request</h1>
+          </div>
+          <div class="content">
+            <p>Hello <strong>${username}</strong>,</p>
+            <p>We received a request to reset your password for your My Secret Diary account.</p>
+            
+            <div class="otp-code">
+              <p style="margin-bottom: 10px;">Your verification code is:</p>
+              <h2>${otp}</h2>
+            </div>
+            
+            <div class="warning">
+              ⚠️ This code will expire in <strong>10 minutes</strong>. 
+              Do not share this code with anyone.
+            </div>
+            
+            <p>If you didn't request this password reset, please ignore this email or contact support if you have concerns.</p>
+            
+            <p>Best regards,<br><strong>My Secret Diary Team</strong></p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} My Secret Diary. All rights reserved.</p>
+            <p>This is an automated message, please do not reply to this email.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const { data, error } = await resend.emails.send({
+      from: 'My Secret Diary <onboarding@resend.dev>',
+      to: [toEmail],
+      subject: '🔐 Password Reset OTP - My Secret Diary',
+      html: htmlContent
     });
 
-    // Simple template params - exactly what your template needs
-    const templateParams = {
-      email: toEmail,
-      name: username,
-      otp: otp
-    };
-
-    // EmailJS API payload
-    const payload = {
-      service_id: serviceId,
-      template_id: templateId,
-      user_id: userId,
-      accessToken: accessToken,
-      template_params: templateParams
-    };
-
-    console.log('📤 Sending to EmailJS...');
-
-    // Send to EmailJS
-    const response = await axios.post(
-      'https://api.emailjs.com/api/v1.0/email/send',
-      payload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://my-secret-diary-pro.vercel.app'
-        },
-        timeout: 15000
-      }
-    );
-
-    console.log('✅ EmailJS Success! Response:', response.data);
-    return { success: true, data: response.data };
-  } catch (error) {
-    console.error('❌ EmailJS Error:');
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error('Data:', error.response.data);
-      console.error('Status Text:', error.response.statusText);
-    } else if (error.request) {
-      console.error('No response received from EmailJS');
-    } else {
-      console.error('Error:', error.message);
+    if (error) {
+      console.error('❌ Resend error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
-    return { 
-      success: false, 
-      error: error.response?.data || error.message 
+
+    console.log('✅ Resend Response:', data);
+    return { success: true, data };
+  } catch (error) {
+    console.error('❌ Email sending error:', error);
+    return {
+      success: false,
+      error: error.message
     };
   }
 }
 
-// ===== TEST EMAIL ROUTE =====
-router.get('/test-email', async (req, res) => {
-  try {
-    const { email } = req.query;
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email required' });
-    }
-
-    const result = await sendOtpEmail(email, '123456', 'Test User');
-    
-    if (result.success) {
-      res.json({ success: true, message: 'Test email sent successfully!' });
-    } else {
-      res.status(500).json({ success: false, error: result.error });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ===== PING ROUTE =====
+// Test route
 router.get('/ping', (req, res) => {
   res.json({
     success: true,
@@ -131,12 +196,11 @@ router.get('/ping', (req, res) => {
   });
 });
 
-// ===== REGISTER =====
+// Register
 router.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
-    // Validation
     if (!username || !email || !password) {
       return res.status(400).json({ 
         success: false, 
@@ -166,7 +230,6 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Check if user exists
     const existingUser = await User.findOne({ 
       $or: [{ email: email.toLowerCase() }, { username }] 
     });
@@ -180,7 +243,6 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Create user
     const user = new User({ 
       username, 
       email: email.toLowerCase(), 
@@ -189,7 +251,6 @@ router.post('/register', async (req, res) => {
     
     await user.save();
 
-    // Generate token
     const token = generateToken(user._id);
 
     res.status(201).json({
@@ -217,7 +278,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// ===== LOGIN =====
+// Login
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -229,7 +290,6 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Find user
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       return res.status(401).json({ 
@@ -238,7 +298,6 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Check password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({ 
@@ -247,7 +306,6 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Generate token
     const token = generateToken(user._id);
 
     res.json({
@@ -275,7 +333,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// ===== FORGOT PASSWORD - SEND OTP =====
+// Forgot Password - Send OTP
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -291,10 +349,8 @@ router.post('/forgot-password', async (req, res) => {
 
     const trimmedEmail = email.toLowerCase().trim();
 
-    // Find user
     const user = await User.findOne({ email: trimmedEmail });
     
-    // For security, always return success even if user doesn't exist
     if (!user) {
       console.log('User not found, but returning success for security');
       return res.json({ 
@@ -303,12 +359,18 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
-    // Generate OTP
+    const existingOTP = otpStore.get(trimmedEmail);
+    if (existingOTP && existingOTP.createdAt > Date.now() - 60000) {
+      return res.status(429).json({ 
+        success: false, 
+        message: 'Please wait 1 minute before requesting another OTP' 
+      });
+    }
+
     const otp = generateOTP();
     const now = Date.now();
-    const expiresAt = now + 10 * 60 * 1000; // 10 minutes
+    const expiresAt = now + 10 * 60 * 1000;
 
-    // Store OTP
     otpStore.set(trimmedEmail, {
       otp,
       expiresAt,
@@ -319,7 +381,6 @@ router.post('/forgot-password', async (req, res) => {
 
     console.log(`🔑 OTP generated for ${trimmedEmail}: ${otp}`);
 
-    // Send OTP email
     const emailResult = await sendOtpEmail(trimmedEmail, otp, user.username);
 
     if (emailResult.success) {
@@ -332,7 +393,8 @@ router.post('/forgot-password', async (req, res) => {
       console.error('❌ Failed to send OTP email:', emailResult.error);
       res.status(500).json({
         success: false,
-        message: 'Failed to send OTP. Please try again.'
+        message: 'Failed to send OTP. Please try again.',
+        error: process.env.NODE_ENV === 'development' ? emailResult.error : undefined
       });
     }
   } catch (error) {
@@ -344,7 +406,7 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// ===== VERIFY OTP =====
+// Verify OTP
 router.post('/verify-otp', async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -383,11 +445,8 @@ router.post('/verify-otp', async (req, res) => {
       });
     }
 
-    // Mark as verified
     storedData.verified = true;
     otpStore.set(trimmedEmail, storedData);
-
-    console.log('✅ OTP verified successfully for:', trimmedEmail);
 
     res.json({ 
       success: true, 
@@ -402,12 +461,10 @@ router.post('/verify-otp', async (req, res) => {
   }
 });
 
-// ===== RESET PASSWORD =====
+// Reset Password
 router.post('/reset-password', async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
-
-    console.log('🔑 Reset password request for:', email);
 
     if (!email || !otp || !newPassword) {
       return res.status(400).json({ 
@@ -455,7 +512,6 @@ router.post('/reset-password', async (req, res) => {
       });
     }
 
-    // Find and update user
     const user = await User.findById(storedData.userId);
     if (!user) {
       otpStore.delete(trimmedEmail);
@@ -465,14 +521,10 @@ router.post('/reset-password', async (req, res) => {
       });
     }
 
-    // Update password
     user.password = newPassword;
     await user.save();
 
-    // Clear OTP after successful reset
     otpStore.delete(trimmedEmail);
-
-    console.log('✅ Password reset successfully for:', trimmedEmail);
 
     res.json({ 
       success: true, 
@@ -487,8 +539,8 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
-// ===== VERIFY TOKEN =====
-router.get('/verify', async (req, res) => {
+// Auth middleware
+const authMiddleware = async (req, res, next) => {
   try {
     let token = req.header('x-auth-token') || req.header('Authorization');
 
@@ -516,22 +568,11 @@ router.get('/verify', async (req, res) => {
       });
     }
 
-    res.json({ 
-      success: true, 
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        name: user.name || user.username,
-        bio: user.bio || '',
-        location: user.location || '',
-        website: user.website || '',
-        avatar: user.avatar || '',
-        createdAt: user.createdAt
-      }
-    });
+    req.userId = user._id;
+    req.user = user;
+    next();
   } catch (error) {
-    console.error('❌ Verify error:', error.message);
+    console.error('❌ Auth middleware error:', error.message);
     
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({ 
@@ -552,32 +593,30 @@ router.get('/verify', async (req, res) => {
       message: 'Authentication failed' 
     });
   }
+};
+
+// Verify token
+router.get('/verify', authMiddleware, async (req, res) => {
+  try {
+    res.json({ 
+      success: true, 
+      user: req.user 
+    });
+  } catch (error) {
+    console.error('❌ Verify error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error during verification' 
+    });
+  }
 });
 
-// ===== UPDATE PROFILE =====
-router.put('/profile', async (req, res) => {
+// Update profile
+router.put('/profile', authMiddleware, async (req, res) => {
   try {
-    let token = req.header('x-auth-token') || req.header('Authorization');
-
-    if (token && token.startsWith('Bearer ')) {
-      token = token.replace('Bearer ', '');
-    }
-
-    if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'No token provided' 
-      });
-    }
-
-    const decoded = jwt.verify(
-      token, 
-      process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026'
-    );
-    
     const { username, name, email, bio, location, website } = req.body;
-    const user = await User.findById(decoded.userId);
 
+    const user = await User.findById(req.userId);
     if (!user) {
       return res.status(404).json({ 
         success: false, 
@@ -585,32 +624,9 @@ router.put('/profile', async (req, res) => {
       });
     }
 
-    // Check username uniqueness if changed
-    if (username && username !== user.username) {
-      const existingUser = await User.findOne({ username });
-      if (existingUser) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Username already taken' 
-        });
-      }
-      user.username = username;
-    }
-
-    // Check email uniqueness if changed
-    if (email && email !== user.email) {
-      const existingUser = await User.findOne({ email: email.toLowerCase() });
-      if (existingUser) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Email already in use' 
-        });
-      }
-      user.email = email.toLowerCase();
-    }
-
-    // Update fields
+    if (username) user.username = username;
     if (name !== undefined) user.name = name;
+    if (email) user.email = email.toLowerCase();
     if (bio !== undefined) user.bio = bio;
     if (location !== undefined) user.location = location;
     if (website !== undefined) user.website = website;
@@ -641,27 +657,9 @@ router.put('/profile', async (req, res) => {
   }
 });
 
-// ===== CHANGE PASSWORD =====
-router.post('/change-password', async (req, res) => {
+// Change password
+router.post('/change-password', authMiddleware, async (req, res) => {
   try {
-    let token = req.header('x-auth-token') || req.header('Authorization');
-
-    if (token && token.startsWith('Bearer ')) {
-      token = token.replace('Bearer ', '');
-    }
-
-    if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'No token provided' 
-      });
-    }
-
-    const decoded = jwt.verify(
-      token, 
-      process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026'
-    );
-    
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
@@ -678,7 +676,7 @@ router.post('/change-password', async (req, res) => {
       });
     }
 
-    const user = await User.findById(decoded.userId);
+    const user = await User.findById(req.userId);
     if (!user) {
       return res.status(404).json({ 
         success: false, 
@@ -710,27 +708,9 @@ router.post('/change-password', async (req, res) => {
   }
 });
 
-// ===== UPLOAD AVATAR =====
-router.post('/upload-avatar', async (req, res) => {
+// Upload avatar
+router.post('/upload-avatar', authMiddleware, async (req, res) => {
   try {
-    let token = req.header('x-auth-token') || req.header('Authorization');
-
-    if (token && token.startsWith('Bearer ')) {
-      token = token.replace('Bearer ', '');
-    }
-
-    if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'No token provided' 
-      });
-    }
-
-    const decoded = jwt.verify(
-      token, 
-      process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026'
-    );
-    
     const { avatarUrl } = req.body;
 
     if (!avatarUrl) {
@@ -740,7 +720,7 @@ router.post('/upload-avatar', async (req, res) => {
       });
     }
 
-    const user = await User.findById(decoded.userId);
+    const user = await User.findById(req.userId);
     if (!user) {
       return res.status(404).json({ 
         success: false, 
@@ -772,33 +752,6 @@ router.post('/upload-avatar', async (req, res) => {
       success: false, 
       message: 'Server error during avatar upload' 
     });
-  }
-});
-
-// ===== CLEAR OTP (FOR TESTING) =====
-router.get('/clear-otp/:email', (req, res) => {
-  const email = req.params.email.toLowerCase().trim();
-  otpStore.delete(email);
-  res.json({ 
-    success: true, 
-    message: `OTP cleared for ${email}` 
-  });
-});
-
-// ===== OTP STATUS (FOR TESTING) =====
-router.get('/otp-status/:email', (req, res) => {
-  const email = req.params.email.toLowerCase().trim();
-  const data = otpStore.get(email);
-  
-  if (data) {
-    res.json({
-      exists: true,
-      expiresIn: Math.max(0, Math.floor((data.expiresAt - Date.now()) / 1000)) + ' seconds',
-      verified: data.verified,
-      otp: process.env.NODE_ENV === 'development' ? data.otp : 'hidden'
-    });
-  } else {
-    res.json({ exists: false });
   }
 });
 

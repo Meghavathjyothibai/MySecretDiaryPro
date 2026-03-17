@@ -1,581 +1,784 @@
-// LOAD ENVIRONMENT VARIABLES
+// LOAD ENVIRONMENT VARIABLES - Smart loading (MUST BE FIRST!)
 const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
 
-// Clear console
+// Clear console for better visibility
 console.clear();
 console.log('🔍 Loading environment variables...\n');
 
-// Load env file
+// Check which env file exists and load it
 if (fs.existsSync(path.join(__dirname, '.env.local'))) {
-  console.log('📁 Loading from .env.local');
+  console.log('📁 Loading environment from .env.local');
   dotenv.config({ path: '.env.local' });
 } else if (fs.existsSync(path.join(__dirname, '.env'))) {
-  console.log('📁 Loading from .env');
+  console.log('📁 Loading environment from .env');
   dotenv.config();
+} else {
+  console.log('⚠️ No .env or .env.local file found! Using process environment variables only.');
 }
 
-// Log status
-console.log('\n📧 EmailJS Status:');
-console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ ' + process.env.EMAILJS_SERVICE_ID : '❌ Missing'}`);
-console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ ' + process.env.EMAILJS_TEMPLATE_ID : '❌ Missing'}`);
-console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing'}`);
-console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing'}`);
+// Set consistent JWT secret
+const JWT_SECRET = process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026';
+
+// Log environment variables status
+console.log('\n🔍 Environment Variables Status:');
+console.log(`   - NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+console.log(`   - MONGODB_URI: ${process.env.MONGODB_URI ? '✅ Set' : '❌ Missing'}`);
+console.log(`   - RESEND_API_KEY: ${process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing'}`);
+console.log(`   - CLIENT_URL: ${process.env.CLIENT_URL || '❌ Missing'}`);
+console.log(`   - CLOUDINARY_NAME: ${process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing'}`);
 
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const axios = require('axios');
+const multer = require('multer');
+const cloudinary = require('cloudinary').v2;
+const { Resend } = require('resend');
+
+// Initialize Resend with your API key
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 
-// ===== CORS =====
+// ===== CORS CONFIGURATION =====
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://my-secret-diary-pro.vercel.app',
+  'https://mysecretdiarypro.onrender.com'
+];
+
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'https://my-secret-diary-pro.vercel.app',
-    'https://mysecretdiarypro.onrender.com'
-  ],
-  credentials: true
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      console.log('❌ CORS blocked origin:', origin);
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
 }));
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// ===== MongoDB Connection =====
-const connectDB = async () => {
-  try {
-    if (!process.env.MONGODB_URI) {
-      console.error('❌ MONGODB_URI missing');
-      return;
-    }
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log('✅ MongoDB Connected');
-  } catch (error) {
-    console.error('❌ MongoDB error:', error.message);
-    setTimeout(connectDB, 5000);
-  }
-};
-connectDB();
+// Serve static files (for local fallback)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ===== User Model =====
-const UserSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true, lowercase: true },
-  password: { type: String, required: true },
-  name: { type: String, default: '' },
-  bio: { type: String, default: '' },
-  location: { type: String, default: '' },
-  website: { type: String, default: '' },
-  avatar: { type: String, default: '' },
-  createdAt: { type: Date, default: Date.now }
+// ================= CLOUDINARY CONFIG =================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-UserSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 10);
-  next();
-});
+console.log('\n✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET');
 
-UserSchema.methods.comparePassword = async function(password) {
-  return await bcrypt.compare(password, this.password);
-};
-
-const User = mongoose.model('User', UserSchema);
-
-// ===== Auth Routes =====
-const router = express.Router();
-
-// Store OTPs
-const otpStore = new Map();
-
-// Clean up expired OTPs every hour
-setInterval(() => {
-  const now = Date.now();
-  for (const [email, data] of otpStore.entries()) {
-    if (data.expiresAt < now) otpStore.delete(email);
-  }
-}, 60 * 60 * 1000);
-
-// Generate JWT Token
-const generateToken = (userId) => {
-  return jwt.sign(
-    { userId },
-    process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026',
-    { expiresIn: '7d' }
-  );
-};
-
-// Generate 6-digit OTP
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
-
-// ===== EMAILJS OTP SENDER - WORKS FOR ALL USERS =====
-async function sendOtpEmail(toEmail, otp, username = 'User') {
-  try {
-    console.log(`\n📧 Sending OTP to: ${toEmail}`);
-    console.log(`🔑 OTP: ${otp}`);
-    console.log(`👤 User: ${username}`);
-
-    // Get EmailJS credentials
-    const serviceId = process.env.EMAILJS_SERVICE_ID;     // service_lxeal6p
-    const templateId = process.env.EMAILJS_TEMPLATE_ID;   // template_ze26cjr
-    const publicKey = process.env.EMAILJS_PUBLIC_KEY;     // -wvN2YaMWnP6JhvmW
-    const privateKey = process.env.EMAILJS_PRIVATE_KEY;   // pr_-suTx0cyWTHRFtnM57B88
-
-    console.log('📤 Using EmailJS credentials:', {
-      serviceId,
-      templateId,
-      publicKey: publicKey ? '✅' : '❌',
-      privateKey: privateKey ? '✅' : '❌'
-    });
-
-    // Simple template params - exactly what your template needs
-    const templateParams = {
-      email: toEmail,     // Your template uses {{email}}
-      name: username,     // Your template uses {{name}} 
-      otp: otp           // Your template uses {{otp}}
-    };
-
-    // EmailJS API payload
-    const payload = {
-      service_id: serviceId,
-      template_id: templateId,
-      user_id: publicKey,
-      accessToken: privateKey,
-      template_params: templateParams
-    };
-
-    console.log('📤 Sending to EmailJS...');
-
-    // Send to EmailJS
-    const response = await axios.post(
-      'https://api.emailjs.com/api/v1.0/email/send',
-      payload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': 'https://my-secret-diary-pro.vercel.app'
-        },
-        timeout: 15000
-      }
-    );
-
-    console.log('✅ EmailJS success:', response.data);
-    return { success: true, data: response.data };
-  } catch (error) {
-    console.error('❌ EmailJS error:');
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error('Data:', error.response.data);
-    } else {
-      console.error('Error:', error.message);
+// ================= MULTER CONFIG (Temporary storage) =================
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = "uploads/temp";
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
-    return { 
-      success: false, 
-      error: error.response?.data || error.message 
-    };
-  }
-}
-
-// ===== TEST ROUTE =====
-router.get('/ping', (req, res) => {
-  res.json({ success: true, message: 'Auth server running' });
-});
-
-// ===== TEST EMAILJS ROUTE =====
-router.get('/test-email', async (req, res) => {
-  try {
-    const { email } = req.query;
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email required' });
-    }
-
-    const result = await sendOtpEmail(email, '123456', 'Test User');
-    
-    if (result.success) {
-      res.json({ success: true, message: 'Test email sent!' });
-    } else {
-      res.status(500).json({ success: false, error: result.error });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '-' + file.originalname);
   }
 });
 
-// ===== REGISTER =====
-router.post('/register', async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
-
-    // Validation
-    if (!username || !email || !password) {
-      return res.status(400).json({ success: false, message: 'All fields required' });
-    }
-    if (username.length < 3) {
-      return res.status(400).json({ success: false, message: 'Username too short' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password too short' });
-    }
-    if (!/^\S+@\S+\.\S+$/.test(email)) {
-      return res.status(400).json({ success: false, message: 'Invalid email' });
-    }
-
-    // Check existing
-    const existing = await User.findOne({ 
-      $or: [{ email: email.toLowerCase() }, { username }] 
-    });
-    if (existing) {
-      return res.status(400).json({ 
-        success: false, 
-        message: existing.email === email.toLowerCase() ? 'Email exists' : 'Username exists'
-      });
-    }
-
-    // Create user
-    const user = new User({ 
-      username, 
-      email: email.toLowerCase(), 
-      password 
-    });
-    await user.save();
-
-    const token = generateToken(user._id);
-
-    res.json({
-      success: true,
-      message: 'Registration successful',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        name: user.name || user.username,
-        bio: user.bio || '',
-        location: user.location || '',
-        website: user.website || '',
-        avatar: user.avatar || '',
-        createdAt: user.createdAt
-      }
-    });
-  } catch (error) {
-    console.error('Register error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// ===== LOGIN =====
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-
-    const token = generateToken(user._id);
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        name: user.name || user.username,
-        bio: user.bio || '',
-        location: user.location || '',
-        website: user.website || '',
-        avatar: user.avatar || '',
-        createdAt: user.createdAt
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ===== FORGOT PASSWORD - SEND OTP =====
-router.post('/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    console.log('📧 Forgot password for:', email);
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email required' });
-    }
-
-    const trimmedEmail = email.toLowerCase().trim();
-    const user = await User.findOne({ email: trimmedEmail });
-
-    // Always return success for security
-    if (!user) {
-      console.log('User not found - returning success');
-      return res.json({ 
-        success: true, 
-        message: 'If your email is registered, you will receive an OTP' 
-      });
-    }
-
-    // Generate OTP
-    const otp = generateOTP();
-    const now = Date.now();
-    const expiresAt = now + 10 * 60 * 1000; // 10 minutes
-
-    // Store OTP
-    otpStore.set(trimmedEmail, {
-      otp,
-      expiresAt,
-      createdAt: now,
-      userId: user._id,
-      verified: false
-    });
-
-    console.log(`🔑 OTP for ${trimmedEmail}: ${otp}`);
-
-    // Send OTP via EmailJS
-    const emailResult = await sendOtpEmail(trimmedEmail, otp, user.username);
-
-    if (emailResult.success) {
-      console.log(`✅ OTP sent to ${trimmedEmail}`);
-      res.json({ 
-        success: true, 
-        message: 'OTP sent successfully to your email' 
-      });
-    } else {
-      console.error('❌ Failed to send:', emailResult.error);
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to send OTP. Please try again.' 
-      });
-    }
-  } catch (error) {
-    console.error('❌ Forgot password error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
-  }
-});
-
-// ===== VERIFY OTP =====
-router.post('/verify-otp', async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-
-    if (!email || !otp) {
-      return res.status(400).json({ success: false, message: 'Email and OTP required' });
-    }
-
-    const trimmedEmail = email.toLowerCase().trim();
-    const storedData = otpStore.get(trimmedEmail);
-
-    if (!storedData) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'OTP expired or not found. Please request a new one.' 
-      });
-    }
-
-    if (storedData.expiresAt < Date.now()) {
-      otpStore.delete(trimmedEmail);
-      return res.status(400).json({ 
-        success: false, 
-        message: 'OTP has expired. Please request a new one.' 
-      });
-    }
-
-    if (storedData.otp !== otp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid OTP. Please try again.' 
-      });
-    }
-
-    // Mark as verified
-    storedData.verified = true;
-    otpStore.set(trimmedEmail, storedData);
-
-    res.json({ 
-      success: true, 
-      message: 'OTP verified successfully. You can now reset your password.' 
-    });
-  } catch (error) {
-    console.error('❌ Verify OTP error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ===== RESET PASSWORD =====
-router.post('/reset-password', async (req, res) => {
-  try {
-    const { email, otp, newPassword } = req.body;
-
-    if (!email || !otp || !newPassword) {
-      return res.status(400).json({ success: false, message: 'All fields required' });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Password must be at least 6 characters' 
-      });
-    }
-
-    const trimmedEmail = email.toLowerCase().trim();
-    const storedData = otpStore.get(trimmedEmail);
-
-    if (!storedData) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'OTP session expired. Please request a new OTP.' 
-      });
-    }
-
-    if (!storedData.verified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Please verify OTP first' 
-      });
-    }
-
-    if (storedData.otp !== otp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid OTP' 
-      });
-    }
-
-    if (storedData.expiresAt < Date.now()) {
-      otpStore.delete(trimmedEmail);
-      return res.status(400).json({ 
-        success: false, 
-        message: 'OTP has expired. Please request a new one.' 
-      });
-    }
-
-    // Update password
-    const user = await User.findById(storedData.userId);
-    if (!user) {
-      otpStore.delete(trimmedEmail);
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    user.password = newPassword;
-    await user.save();
-
-    // Clear OTP
-    otpStore.delete(trimmedEmail);
-
-    res.json({ 
-      success: true, 
-      message: 'Password reset successfully. You can now login.' 
-    });
-  } catch (error) {
-    console.error('❌ Reset password error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ===== VERIFY TOKEN =====
-router.get('/verify', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'No token' });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026');
-    const user = await User.findById(decoded.userId).select('-password');
-    
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'User not found' });
-    }
-
-    res.json({ success: true, user });
-  } catch (error) {
-    res.status(401).json({ success: false, message: 'Invalid token' });
-  }
-});
-
-// ===== UPDATE PROFILE =====
-router.put('/profile', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026');
-    
-    const { username, name, email, bio, location, website } = req.body;
-    const user = await User.findById(decoded.userId);
-
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (username) user.username = username;
-    if (name !== undefined) user.name = name;
-    if (email) user.email = email.toLowerCase();
-    if (bio !== undefined) user.bio = bio;
-    if (location !== undefined) user.location = location;
-    if (website !== undefined) user.website = website;
-
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Profile updated',
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        name: user.name || user.username,
-        bio: user.bio || '',
-        location: user.location || '',
-        website: user.website || '',
-        avatar: user.avatar || '',
-        createdAt: user.createdAt
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ===== MOUNT ROUTES =====
-app.use('/api/auth', router);
-
-// ===== HEALTH CHECK =====
-app.get('/api/health', (req, res) => {
+// ===== DEBUG ENV ROUTE =====
+app.get('/api/debug-env', (req, res) => {
   res.json({
-    status: 'OK',
-    time: new Date().toISOString(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    success: true,
+    environment: process.env.NODE_ENV || 'development',
+    resend_api_key: process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing',
+    mongodb_uri: process.env.MONGODB_URI ? '✅ Set' : '❌ Missing',
+    client_url: process.env.CLIENT_URL || '❌ Missing',
+    cloudinary: process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing',
+    jwt_secret: process.env.JWT_SECRET ? '✅ Set' : '❌ Missing'
   });
 });
 
-app.get('/', (req, res) => {
-  res.json({ message: '🚀 Server running' });
+// ===== TEST RESEND ROUTE =====
+app.get('/api/test-resend', async (req, res) => {
+  try {
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required. Use ?email=your@email.com' 
+      });
+    }
+
+    console.log('\n🧪 Testing Resend with email:', email);
+
+    if (!process.env.RESEND_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: 'Resend API key is missing'
+      });
+    }
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Test Email</title>
+        <style>
+          body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+          }
+          .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          }
+          .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 30px;
+            text-align: center;
+          }
+          .header h1 {
+            margin: 0;
+            color: white;
+            font-size: 28px;
+          }
+          .content {
+            padding: 40px 30px;
+            background: white;
+          }
+          .success-badge {
+            background: #10b981;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: inline-block;
+            margin-bottom: 20px;
+          }
+          .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>✅ My Secret Diary</h1>
+          </div>
+          <div class="content">
+            <div class="success-badge">Test Email</div>
+            <h2>Hello!</h2>
+            <p>This is a test email from your My Secret Diary application.</p>
+            <p>If you received this, Resend is working correctly!</p>
+            <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0; font-size: 18px;">Your test OTP would be:</p>
+              <h2 style="color: #667eea; font-size: 48px; letter-spacing: 10px; margin: 10px 0;">123456</h2>
+            </div>
+            <hr>
+            <p style="color: #666;">This is an automated message, please do not reply.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} My Secret Diary. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const { data, error } = await resend.emails.send({
+      from: 'My Secret Diary <onboarding@resend.dev>',
+      to: [email],
+      subject: '✅ Test Email from My Secret Diary',
+      html: htmlContent
+    });
+
+    if (error) {
+      console.error('❌ Resend error:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+
+    console.log('✅ Resend Response:', data);
+    res.json({ 
+      success: true, 
+      message: '✅ Test email sent successfully! Check your inbox.',
+      data 
+    });
+  } catch (error) {
+    console.error('❌ Test error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
 });
 
-// ===== START SERVER =====
+// ===== MongoDB Connection with retry logic =====
+const connectDB = async () => {
+  try {
+    if (!process.env.MONGODB_URI) {
+      console.error('❌ MONGODB_URI is not defined in environment variables');
+      console.error('📌 Please check your .env.local or Render environment variables');
+      return;
+    }
+
+    console.log('📡 Connecting to MongoDB...');
+    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
+    // Retry connection after 5 seconds
+    setTimeout(connectDB, 5000);
+  }
+};
+
+connectDB();
+
+// Import models
+const User = require('./models/User');
+
+// Import routes
+const authRoutes = require('./routes/auth');
+
+// Use auth routes
+app.use('/api/auth', authRoutes);
+
+// ================= CLOUDINARY IMAGE UPLOAD =================
+app.post('/api/upload/image', async (req, res) => {
+  try {
+    // Verify token
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    // Use multer to handle the upload
+    upload.single('image')(req, res, async function(err) {
+      if (err) {
+        console.error('Multer error:', err);
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      try {
+        // Upload to Cloudinary
+        const result = await cloudinary.uploader.upload(req.file.path, {
+          folder: 'diary-images',
+          resource_type: 'image'
+        });
+
+        // Delete temporary file
+        fs.unlinkSync(req.file.path);
+
+        res.json({
+          success: true,
+          url: result.secure_url
+        });
+      } catch (cloudinaryError) {
+        console.error('Cloudinary upload error:', cloudinaryError);
+        
+        // Fallback to local storage if Cloudinary fails
+        const localDir = "uploads/images";
+        if (!fs.existsSync(localDir)) {
+          fs.mkdirSync(localDir, { recursive: true });
+        }
+        
+        const localPath = path.join(localDir, req.file.filename);
+        fs.renameSync(req.file.path, localPath);
+        
+        const imageUrl = `/uploads/images/${req.file.filename}`;
+        
+        res.json({
+          success: true,
+          url: imageUrl,
+          warning: 'Uploaded to local storage (Cloudinary failed)'
+        });
+      }
+    });
+
+  } catch (error) {
+    console.error('Image upload error:', error);
+    res.status(500).json({ error: 'Image upload failed' });
+  }
+});
+
+// ================= CLOUDINARY VOICE UPLOAD =================
+app.post('/api/upload/voice', async (req, res) => {
+  try {
+    // Verify token
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    // Use multer to handle the upload
+    upload.single('voice')(req, res, async function(err) {
+      if (err) {
+        console.error('Multer error:', err);
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      try {
+        // Upload to Cloudinary (voice notes are treated as video type)
+        const result = await cloudinary.uploader.upload(req.file.path, {
+          folder: 'voice-notes',
+          resource_type: 'video', // Cloudinary uses 'video' for audio files
+          format: 'webm'
+        });
+
+        // Delete temporary file
+        fs.unlinkSync(req.file.path);
+
+        res.json({
+          success: true,
+          url: result.secure_url
+        });
+      } catch (cloudinaryError) {
+        console.error('Cloudinary upload error:', cloudinaryError);
+        
+        // Fallback to local storage if Cloudinary fails
+        const localDir = "uploads/voices";
+        if (!fs.existsSync(localDir)) {
+          fs.mkdirSync(localDir, { recursive: true });
+        }
+        
+        const localPath = path.join(localDir, req.file.filename);
+        fs.renameSync(req.file.path, localPath);
+        
+        const voiceUrl = `/uploads/voices/${req.file.filename}`;
+        
+        res.json({
+          success: true,
+          url: voiceUrl,
+          warning: 'Uploaded to local storage (Cloudinary failed)'
+        });
+      }
+    });
+
+  } catch (error) {
+    console.error('Voice upload error:', error);
+    res.status(500).json({ error: 'Voice upload failed' });
+  }
+});
+
+// Diary Entry Schema
+const diaryEntrySchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  content: { type: String, required: true },
+  mood: { type: String, default: 'neutral' },
+  tags: { type: [String], default: [] },
+  images: { type: [String], default: [] },
+  voiceNotes: { type: [String], default: [] },
+  isLocked: { type: Boolean, default: false },
+  password: { type: String, default: null },
+  date: { type: Date, default: Date.now },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
+});
+
+// Hash password before saving
+diaryEntrySchema.pre('save', async function(next) {
+  if (this.isModified('password') && this.password) {
+    this.password = await bcrypt.hash(this.password, 10);
+  }
+  next();
+});
+
+const DiaryEntry = mongoose.model('DiaryEntry', diaryEntrySchema);
+
+// ============ DIARY ROUTES ============
+
+// Middleware to verify token
+const authMiddleware = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+    
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    req.user = user;
+    req.userId = user._id;
+    next();
+  } catch (error) {
+    console.error('Auth middleware error:', error);
+    res.status(401).json({ error: 'Invalid or expired token' });
+  }
+};
+
+// GET all entries for a user
+app.get('/api/diary', authMiddleware, async (req, res) => {
+  try {
+    const entries = await DiaryEntry.find({ user: req.userId }).sort({ date: -1 });
+    const processedEntries = entries.map(entry => {
+      const entryObj = entry.toObject();
+      delete entryObj.password;
+      
+      if (entry.isLocked) {
+        return {
+          _id: entryObj._id,
+          title: entryObj.title,
+          isLocked: true,
+          date: entryObj.date,
+          mood: entryObj.mood,
+          tags: []
+        };
+      }
+      return entryObj;
+    });
+    res.json(processedEntries);
+  } catch (error) {
+    console.error('Error fetching diary entries:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET single entry
+app.get('/api/diary/:id', authMiddleware, async (req, res) => {
+  try {
+    const entry = await DiaryEntry.findOne({ 
+      _id: req.params.id,
+      user: req.userId 
+    });
+    
+    if (!entry) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    
+    const entryObj = entry.toObject();
+    delete entryObj.password;
+    
+    if (entry.isLocked) {
+      return res.json({
+        _id: entryObj._id,
+        title: entryObj.title,
+        isLocked: true,
+        date: entryObj.date,
+        mood: entryObj.mood
+      });
+    }
+    
+    res.json(entryObj);
+  } catch (error) {
+    console.error('Error fetching diary entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// CREATE new entry
+app.post('/api/diary', authMiddleware, async (req, res) => {
+  try {
+    const { title, content, mood, tags, images, voiceNotes, isLocked, password } = req.body;
+    
+    const newEntry = new DiaryEntry({
+      title,
+      content,
+      mood: mood || 'neutral',
+      tags: tags || [],
+      images: images || [],
+      voiceNotes: voiceNotes || [],
+      isLocked: isLocked || false,
+      password: password || null,
+      user: req.userId
+    });
+    
+    const savedEntry = await newEntry.save();
+    const entryObj = savedEntry.toObject();
+    delete entryObj.password;
+    
+    res.status(201).json(entryObj);
+  } catch (error) {
+    console.error('Create entry error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// UPDATE entry
+app.put('/api/diary/:id', authMiddleware, async (req, res) => {
+  try {
+    const { title, content, mood, tags, images, voiceNotes, password } = req.body;
+    
+    const entry = await DiaryEntry.findOne({ 
+      _id: req.params.id,
+      user: req.userId 
+    });
+    
+    if (!entry) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    
+    // Check if entry is locked and handle password
+    if (entry.isLocked) {
+      if (!password) {
+        return res.status(403).json({ error: 'Password required to edit locked entry' });
+      }
+
+      const isMatch = await bcrypt.compare(password, entry.password);
+      
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Wrong password' });
+      }
+    }
+    
+    // Update entry
+    entry.title = title;
+    entry.content = content;
+    entry.mood = mood;
+    entry.tags = tags;
+    entry.images = images;
+    entry.voiceNotes = voiceNotes;
+    
+    const updatedEntry = await entry.save();
+    const entryObj = updatedEntry.toObject();
+    delete entryObj.password;
+    
+    res.json(entryObj);
+  } catch (error) {
+    console.error('Update entry error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE entry
+app.delete('/api/diary/:id', authMiddleware, async (req, res) => {
+  try {
+    const deletedEntry = await DiaryEntry.findOneAndDelete({ 
+      _id: req.params.id,
+      user: req.userId 
+    });
+    
+    if (!deletedEntry) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    res.json({ message: 'Entry deleted successfully' });
+  } catch (error) {
+    console.error('Delete entry error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// LOCK entry
+app.put('/api/diary/:id/lock', authMiddleware, async (req, res) => {
+  try {
+    const { password } = req.body;
+    
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+    
+    const entry = await DiaryEntry.findOne({ 
+      _id: req.params.id,
+      user: req.userId 
+    });
+    
+    if (!entry) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    entry.isLocked = true;
+    entry.password = hashedPassword;
+    await entry.save();
+    
+    res.json({ 
+      success: true, 
+      message: 'Entry locked successfully'
+    });
+  } catch (error) {
+    console.error('Lock error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// UNLOCK entry
+app.post('/api/diary/:id/unlock', authMiddleware, async (req, res) => {
+  try {
+    const { password } = req.body;
+    
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+    
+    const entry = await DiaryEntry.findOne({ 
+      _id: req.params.id,
+      user: req.userId 
+    });
+    
+    if (!entry) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    
+    if (!entry.password) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Entry is not locked' 
+      });
+    }
+    
+    const isMatch = await bcrypt.compare(password, entry.password);
+    
+    if (isMatch) {
+      const entryObj = entry.toObject();
+      delete entryObj.password;
+      
+      res.json({ 
+        success: true, 
+        message: 'Entry unlocked',
+        entry: entryObj 
+      });
+    } else {
+      res.status(401).json({ 
+        success: false, 
+        error: 'Wrong password' 
+      });
+    }
+  } catch (error) {
+    console.error('Unlock error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test route
+app.get('/', (req, res) => {
+  res.json({ 
+    message: '🚀 Server is running', 
+    status: 'OK',
+    environment: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({
+    server: 'running',
+    serverTime: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({ 
+    success: false, 
+    message: 'Route not found',
+    path: req.originalUrl 
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('❌ Server Error:', err.stack);
+  res.status(500).json({ 
+    success: false, 
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+// Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n✅ Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 URL: https://mysecretdiarypro.onrender.com`);
-  console.log(`📧 EmailJS: ${process.env.EMAILJS_SERVICE_ID ? '✅ Ready' : '❌ Not configured'}`);
-  console.log(`\n📝 Test EmailJS:`);
-  console.log(`   GET https://mysecretdiarypro.onrender.com/api/auth/test-email?email=your@email.com`);
+
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n✅ Server started on port ${PORT}`);
+  console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌐 Local: http://localhost:${PORT}`);
+  console.log(`🚀 Render URL: https://mysecretdiarypro.onrender.com`);
+  console.log(`📧 Resend API Key: ${process.env.RESEND_API_KEY ? '✅ Set' : '❌ Missing'}`);
+  console.log(`📝 API Endpoints:`);
+  console.log(`   - Auth: /api/auth`);
+  console.log(`   - Diary: /api/diary`);
+  console.log(`   - Upload Image: /api/upload/image`);
+  console.log(`   - Upload Voice: /api/upload/voice`);
+  console.log(`   - Debug Env: /api/debug-env`);
+  console.log(`   - Test Resend: /api/test-resend?email=your@email.com`);
+  console.log(`   - Health: /api/health`);
+});
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use.`);
+    process.exit(1);
+  } else {
+    console.error('❌ Server error:', error);
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed');
+      process.exit(0);
+    });
+  });
 });
