@@ -9,12 +9,11 @@ const ForgotPassword = () => {
   const navigate = useNavigate();
   const { api } = useAuth();
   
-  // State management
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [step, setStep] = useState(1); // 1: email, 2: otp, 3: new password
+  const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [resendDisabled, setResendDisabled] = useState(false);
   const [countdown, setCountdown] = useState(30);
@@ -22,7 +21,6 @@ const ForgotPassword = () => {
   const [otpError, setOtpError] = useState('');
   const [passwordError, setPasswordError] = useState('');
 
-  // ========== HELPER FUNCTIONS ==========
   const validateEmail = (email) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
@@ -43,12 +41,10 @@ const ForgotPassword = () => {
     }, 1000);
   };
 
-  // ========== STEP 1: SEND OTP ==========
   const handleSendOtp = async (e) => {
     e.preventDefault();
     setEmailError('');
 
-    // Validate email
     if (!email) {
       setEmailError('Please enter your email address');
       toast.error('Please enter your email address');
@@ -65,14 +61,11 @@ const ForgotPassword = () => {
     try {
       console.log('📤 Sending OTP request for:', email);
       
-      // Send OTP to email via your backend (which now uses EmailJS)
       const response = await api.post('/auth/forgot-password', { email });
       
-      console.log('📥 Response:', response.data);
-      
       if (response.data.success) {
-        toast.success('OTP sent to your email!', {
-          duration: 5000,
+        toast.success('OTP sent to your email! Check your inbox (and spam folder)', {
+          duration: 6000,
           icon: '📧'
         });
         setStep(2);
@@ -83,10 +76,13 @@ const ForgotPassword = () => {
     } catch (error) {
       console.error('❌ Send OTP error:', error);
       
-      // Handle different error scenarios
-      const errorMessage = error.response?.data?.message || 
-                          error.message || 
-                          'Failed to send OTP. Please try again.';
+      let errorMessage = 'Failed to send OTP. Please try again.';
+      
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
       
       setEmailError(errorMessage);
       toast.error(errorMessage);
@@ -95,14 +91,11 @@ const ForgotPassword = () => {
     }
   };
 
-  // ========== RESEND OTP ==========
   const handleResendOtp = async () => {
     if (resendDisabled) return;
 
     setLoading(true);
     try {
-      console.log('📤 Resending OTP for:', email);
-      
       const response = await api.post('/auth/forgot-password', { email });
       
       if (response.data.success) {
@@ -120,12 +113,10 @@ const ForgotPassword = () => {
     }
   };
 
-  // ========== STEP 2: VERIFY OTP ==========
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setOtpError('');
 
-    // Validate OTP
     if (!otp) {
       setOtpError('Please enter the OTP');
       toast.error('Please enter the OTP');
@@ -146,11 +137,7 @@ const ForgotPassword = () => {
 
     setLoading(true);
     try {
-      console.log('🔐 Verifying OTP for:', email);
-      
       const response = await api.post('/auth/verify-otp', { email, otp });
-      
-      console.log('📥 Verify response:', response.data);
       
       if (response.data.success) {
         toast.success('OTP verified successfully!', {
@@ -165,9 +152,7 @@ const ForgotPassword = () => {
     } catch (error) {
       console.error('❌ Verify OTP error:', error);
       
-      const errorMessage = error.response?.data?.message || 
-                          'Invalid OTP. Please try again.';
-      
+      const errorMessage = error.response?.data?.message || 'Invalid OTP. Please try again.';
       setOtpError(errorMessage);
       toast.error(errorMessage);
     } finally {
@@ -175,12 +160,10 @@ const ForgotPassword = () => {
     }
   };
 
-  // ========== STEP 3: RESET PASSWORD ==========
   const handleResetPassword = async (e) => {
     e.preventDefault();
     setPasswordError('');
 
-    // Validate passwords
     if (!newPassword) {
       setPasswordError('Please enter new password');
       toast.error('Please enter new password');
@@ -201,15 +184,11 @@ const ForgotPassword = () => {
 
     setLoading(true);
     try {
-      console.log('🔄 Resetting password for:', email);
-      
       const response = await api.post('/auth/reset-password', {
         email,
         otp,
         newPassword
       });
-      
-      console.log('📥 Reset response:', response.data);
       
       if (response.data.success) {
         toast.success('Password reset successfully! Redirecting to login...', {
@@ -217,12 +196,10 @@ const ForgotPassword = () => {
           icon: '🎉'
         });
         
-        // Clear any stored OTP data
         setOtp('');
         setNewPassword('');
         setConfirmPassword('');
         
-        // Redirect to login after 2 seconds
         setTimeout(() => {
           navigate('/login');
         }, 2000);
@@ -230,9 +207,7 @@ const ForgotPassword = () => {
     } catch (error) {
       console.error('❌ Reset password error:', error);
       
-      const errorMessage = error.response?.data?.message || 
-                          'Failed to reset password. Please try again.';
-      
+      const errorMessage = error.response?.data?.message || 'Failed to reset password. Please try again.';
       setPasswordError(errorMessage);
       toast.error(errorMessage);
     } finally {
@@ -240,43 +215,30 @@ const ForgotPassword = () => {
     }
   };
 
-  // ========== STEP ICONS AND TEXT ==========
   const getStepIcon = () => {
     switch(step) {
-      case 1:
-        return <Mail className="h-10 w-10 text-white" />;
-      case 2:
-        return <Key className="h-10 w-10 text-white" />;
-      case 3:
-        return <Lock className="h-10 w-10 text-white" />;
-      default:
-        return <Mail className="h-10 w-10 text-white" />;
+      case 1: return <Mail className="h-10 w-10 text-white" />;
+      case 2: return <Key className="h-10 w-10 text-white" />;
+      case 3: return <Lock className="h-10 w-10 text-white" />;
+      default: return <Mail className="h-10 w-10 text-white" />;
     }
   };
 
   const getStepTitle = () => {
     switch(step) {
-      case 1:
-        return 'Forgot Password?';
-      case 2:
-        return 'Enter Verification Code';
-      case 3:
-        return 'Create New Password';
-      default:
-        return 'Forgot Password?';
+      case 1: return 'Forgot Password?';
+      case 2: return 'Enter Verification Code';
+      case 3: return 'Create New Password';
+      default: return 'Forgot Password?';
     }
   };
 
   const getStepDescription = () => {
     switch(step) {
-      case 1:
-        return "Enter your email address and we'll send you a 6-digit verification code";
-      case 2:
-        return `Enter the 6-digit code sent to ${email}`;
-      case 3:
-        return 'Choose a strong password for your account';
-      default:
-        return '';
+      case 1: return "Enter your email address and we'll send you a 6-digit verification code";
+      case 2: return `Enter the 6-digit code sent to ${email}`;
+      case 3: return 'Choose a strong password for your account';
+      default: return '';
     }
   };
 
@@ -288,7 +250,6 @@ const ForgotPassword = () => {
         transition={{ duration: 0.5 }}
         className="max-w-md w-full"
       >
-        {/* Back to Login Link */}
         <Link
           to="/login"
           className="inline-flex items-center text-gray-600 hover:text-purple-600 mb-8 transition-colors group"
@@ -297,9 +258,7 @@ const ForgotPassword = () => {
           Back to Login
         </Link>
 
-        {/* Main Card */}
         <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl p-8 border border-white/20">
-          {/* Step Icon */}
           <div className="flex justify-center mb-6">
             <motion.div
               key={step}
@@ -312,7 +271,6 @@ const ForgotPassword = () => {
             </motion.div>
           </div>
 
-          {/* Title and Description */}
           <motion.div
             key={`text-${step}`}
             initial={{ opacity: 0, y: 10 }}
@@ -330,7 +288,6 @@ const ForgotPassword = () => {
             </p>
           </motion.div>
 
-          {/* Step 1: Email Input */}
           {step === 1 && (
             <motion.form
               initial={{ opacity: 0, x: -20 }}
@@ -392,7 +349,6 @@ const ForgotPassword = () => {
             </motion.form>
           )}
 
-          {/* Step 2: OTP Verification */}
           {step === 2 && (
             <motion.form
               initial={{ opacity: 0, x: -20 }}
@@ -477,7 +433,6 @@ const ForgotPassword = () => {
             </motion.form>
           )}
 
-          {/* Step 3: New Password */}
           {step === 3 && (
             <motion.form
               initial={{ opacity: 0, x: -20 }}
@@ -566,7 +521,6 @@ const ForgotPassword = () => {
             </motion.form>
           )}
 
-          {/* Help Links */}
           <div className="mt-8 text-center text-sm text-gray-500">
             <p>
               Need help?{' '}
@@ -577,7 +531,6 @@ const ForgotPassword = () => {
           </div>
         </div>
 
-        {/* Security Note */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

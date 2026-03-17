@@ -18,18 +18,15 @@ if (fs.existsSync(path.join(__dirname, '.env.local'))) {
   console.log('⚠️ No .env or .env.local file found! Using process environment variables only.');
 }
 
+// Set consistent JWT secret
+const JWT_SECRET = process.env.JWT_SECRET || 'my-secret-diary-pro-super-secret-key-2026';
+
 // Verify EmailJS keys are loaded (DEBUGGING)
 console.log('\n📧 EmailJS Configuration Status:');
 console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ ' + process.env.EMAILJS_SERVICE_ID : '❌ Missing'}`);
 console.log(`   - Template ID: ${process.env.EMAILJS_TEMPLATE_ID ? '✅ ' + process.env.EMAILJS_TEMPLATE_ID : '❌ Missing'}`);
 console.log(`   - Public Key: ${process.env.EMAILJS_PUBLIC_KEY ? '✅ ' + process.env.EMAILJS_PUBLIC_KEY.substring(0, 10) + '...' : '❌ Missing'}`);
 console.log(`   - Private Key: ${process.env.EMAILJS_PRIVATE_KEY ? '✅ Present' : '❌ Missing'}`);
-
-// Stop if EmailJS keys are missing
-if (!process.env.EMAILJS_SERVICE_ID || !process.env.EMAILJS_TEMPLATE_ID || !process.env.EMAILJS_PUBLIC_KEY) {
-  console.error('\n❌ CRITICAL: EmailJS keys are missing! Forgot password will NOT work.');
-  console.error('   Please make sure .env.local exists with your actual EmailJS keys.');
-}
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -38,9 +35,101 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
-const axios = require('axios'); // Add axios for EmailJS testing
+const axios = require('axios');
 
 const app = express();
+
+// ===== CORS CONFIGURATION with your actual URLs =====
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://my-secret-diary-pro.vercel.app',           // Your Vercel frontend
+  'https://mysecretdiarypro.onrender.com'             // Your Render backend
+];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      console.log('❌ CORS blocked origin:', origin);
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
+}));
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Serve static files (for local fallback)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ================= CLOUDINARY CONFIG =================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+console.log('\n✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET');
+
+// ================= MULTER CONFIG (Temporary storage) =================
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = "uploads/temp";
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
+// MongoDB Connection with retry logic
+const connectDB = async () => {
+  try {
+    if (!process.env.MONGODB_URI) {
+      console.error('❌ MONGODB_URI is not defined in environment variables');
+      console.error('📌 Please check your .env.local or Render environment variables');
+      process.exit(1);
+    }
+
+    console.log('📡 Connecting to MongoDB...');
+    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
+    // Retry connection after 5 seconds
+    setTimeout(connectDB, 5000);
+  }
+};
+
+connectDB();
+
+// Import models
+const User = require('./models/User');
+
+// Import routes
+const authRoutes = require('./routes/auth');
+
+// Use auth routes
+app.use('/api/auth', authRoutes);
 
 // ===== TEST ENV ROUTE =====
 app.get('/api/test-env', (req, res) => {
@@ -56,13 +145,13 @@ app.get('/api/test-env', (req, res) => {
     emailjs_public_key: process.env.EMAILJS_PUBLIC_KEY ? '✅ Set' : '❌ Missing',
     emailjs_private_key: process.env.EMAILJS_PRIVATE_KEY ? '✅ Set' : '❌ Missing',
     mongodb_uri: process.env.MONGODB_URI ? '✅ Set' : '❌ Missing',
-    jwt_secret: process.env.JWT_SECRET ? '✅ Set' : '❌ Missing',
+    jwt_secret: process.env.JWT_SECRET ? '✅ Set' : '❌ Missing (using default)',
     cloudinary: process.env.CLOUDINARY_CLOUD_NAME ? '✅ Set' : '❌ Missing',
     node_env: process.env.NODE_ENV || 'development'
   });
 });
 
-// ===== TEST EMAILJS ROUTE (UPDATED with correct variables) =====
+// ===== TEST EMAILJS ROUTE =====
 app.get('/api/test-email', async (req, res) => {
   try {
     const { email } = req.query;
@@ -90,35 +179,33 @@ app.get('/api/test-email', async (req, res) => {
         details: {
           serviceId: !!serviceId,
           templateId: !!templateId,
-          publicKey: !!publicKey
+          publicKey: !!publicKey,
+          privateKey: !!privateKey
         }
       });
     }
 
-    // IMPORTANT: Using CORRECT variable names based on test results
-    // Your template uses: {{email}}, {{otp}}, {{name}}
+    // Using 'email' as the variable name (as per your template)
     const payload = {
       service_id: serviceId,
       template_id: templateId,
       user_id: publicKey,
       accessToken: privateKey,
       template_params: {
-        email: email,           // ← FIXED: Using 'email' (not 'to_email')
-        otp: '123456',          // ← FIXED: Using 'otp'
-        name: 'Test User',      // ← FIXED: Using 'name' (not 'to_name')
+        email: email,
+        name: 'Test User',
+        otp: '123456',
         reply_to: 'noreply@mysecretdiary.com'
       }
     };
 
     console.log('📤 Sending payload to EmailJS...');
-    console.log('Payload:', JSON.stringify(payload, null, 2));
 
-    // Send with increased timeout
     const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', payload, {
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
-        'Origin': 'http://localhost:3000'
+        'Origin': process.env.CLIENT_URL || 'https://my-secret-diary-pro.vercel.app'
       }
     });
 
@@ -154,7 +241,7 @@ app.get('/api/test-email', async (req, res) => {
   }
 });
 
-// ===== TEST EMAILJS POST ROUTE (UPDATED with correct variables) =====
+// ===== TEST EMAILJS POST ROUTE =====
 app.post('/api/test-email', async (req, res) => {
   try {
     const { email } = req.body;
@@ -168,16 +255,15 @@ app.post('/api/test-email', async (req, res) => {
 
     console.log('\n🧪 Testing EmailJS POST with email:', email);
     
-    // IMPORTANT: Using CORRECT variable names
     const payload = {
       service_id: process.env.EMAILJS_SERVICE_ID,
       template_id: process.env.EMAILJS_TEMPLATE_ID,
       user_id: process.env.EMAILJS_PUBLIC_KEY,
       accessToken: process.env.EMAILJS_PRIVATE_KEY,
       template_params: {
-        email: email,           // ← FIXED: Using 'email'
-        otp: '123456',          // ← FIXED: Using 'otp'
-        name: 'Test User',      // ← FIXED: Using 'name'
+        email: email,
+        otp: '123456',
+        name: 'Test User',
         reply_to: 'noreply@mysecretdiary.com'
       }
     };
@@ -186,7 +272,7 @@ app.post('/api/test-email', async (req, res) => {
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
-        'Origin': 'http://localhost:3000'
+        'Origin': process.env.CLIENT_URL || 'https://my-secret-diary-pro.vercel.app'
       }
     });
 
@@ -204,95 +290,21 @@ app.post('/api/test-email', async (req, res) => {
   }
 });
 
-// Middleware
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'https://my-secret-diary-pro.vercel.app'
-  ],
-  credentials: true
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Serve static files (for local fallback)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// ================= CLOUDINARY CONFIG =================
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-console.log('\n✅ Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME || 'NOT SET');
-
-// ================= MULTER CONFIG (Temporary storage) =================
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const dir = "uploads/temp";
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    cb(null, dir);
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
-});
-
-const upload = multer({ 
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
-});
-
-// MongoDB Connection
-const connectDB = async () => {
-  try {
-    if (!process.env.MONGODB_URI) {
-      console.error('❌ MONGODB_URI is not defined in environment variables');
-      console.error('📌 Please check your .env.local or Render environment variables');
-      process.exit(1);
-    }
-
-    console.log('📡 Connecting to MongoDB...');
-    const conn = await mongoose.connect(process.env.MONGODB_URI);
-    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error.message);
-    process.exit(1);
-  }
-};
-
-connectDB();
-
-// Import models
-const User = require('./models/User');
-
-// Import routes
-const authRoutes = require('./routes/auth');
-
-// Use auth routes
-app.use('/api/auth', authRoutes);
-
 // ================= CLOUDINARY IMAGE UPLOAD =================
 app.post('/api/upload/image', async (req, res) => {
   try {
-    // Verify token
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.userId);
     
     if (!user) {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // Use multer to handle the upload
     upload.single('image')(req, res, async function(err) {
       if (err) {
         console.error('Multer error:', err);
@@ -304,13 +316,11 @@ app.post('/api/upload/image', async (req, res) => {
       }
 
       try {
-        // Upload to Cloudinary
         const result = await cloudinary.uploader.upload(req.file.path, {
           folder: 'diary-images',
           resource_type: 'image'
         });
 
-        // Delete temporary file
         fs.unlinkSync(req.file.path);
 
         res.json({
@@ -320,7 +330,6 @@ app.post('/api/upload/image', async (req, res) => {
       } catch (cloudinaryError) {
         console.error('Cloudinary upload error:', cloudinaryError);
         
-        // Fallback to local storage if Cloudinary fails
         const localDir = "uploads/images";
         if (!fs.existsSync(localDir)) {
           fs.mkdirSync(localDir, { recursive: true });
@@ -348,20 +357,18 @@ app.post('/api/upload/image', async (req, res) => {
 // ================= CLOUDINARY VOICE UPLOAD =================
 app.post('/api/upload/voice', async (req, res) => {
   try {
-    // Verify token
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.userId);
     
     if (!user) {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // Use multer to handle the upload
     upload.single('voice')(req, res, async function(err) {
       if (err) {
         console.error('Multer error:', err);
@@ -373,14 +380,12 @@ app.post('/api/upload/voice', async (req, res) => {
       }
 
       try {
-        // Upload to Cloudinary (voice notes are treated as video type)
         const result = await cloudinary.uploader.upload(req.file.path, {
           folder: 'voice-notes',
-          resource_type: 'video', // Cloudinary uses 'video' for audio files
+          resource_type: 'video',
           format: 'webm'
         });
 
-        // Delete temporary file
         fs.unlinkSync(req.file.path);
 
         res.json({
@@ -390,7 +395,6 @@ app.post('/api/upload/voice', async (req, res) => {
       } catch (cloudinaryError) {
         console.error('Cloudinary upload error:', cloudinaryError);
         
-        // Fallback to local storage if Cloudinary fails
         const localDir = "uploads/voices";
         if (!fs.existsSync(localDir)) {
           fs.mkdirSync(localDir, { recursive: true });
@@ -450,7 +454,7 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.userId);
     
     if (!user) {
@@ -567,7 +571,6 @@ app.put('/api/diary/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Entry not found' });
     }
     
-    // Check if entry is locked and handle password
     if (entry.isLocked) {
       if (!password) {
         return res.status(403).json({ error: 'Password required to edit locked entry' });
@@ -580,7 +583,6 @@ app.put('/api/diary/:id', authMiddleware, async (req, res) => {
       }
     }
     
-    // Update entry
     entry.title = title;
     entry.content = content;
     entry.mood = mood;
@@ -704,6 +706,7 @@ app.get('/', (req, res) => {
   res.json({ 
     message: '🚀 Server is running', 
     status: 'OK',
+    environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString()
   });
 });
@@ -713,14 +716,34 @@ app.get('/api/health', (req, res) => {
   res.json({
     server: 'running',
     serverTime: new Date().toISOString(),
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({ 
+    success: false, 
+    message: 'Route not found',
+    path: req.originalUrl 
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('❌ Server Error:', err.stack);
+  res.status(500).json({ 
+    success: false, 
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
 // Start server
 const PORT = process.env.PORT || 5000;
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   const envFile = fs.existsSync(path.join(__dirname, '.env.local')) 
     ? '.env.local' 
     : fs.existsSync(path.join(__dirname, '.env')) 
@@ -729,15 +752,16 @@ const server = app.listen(PORT, () => {
   
   console.log(`\n✅ Server started on port ${PORT}`);
   console.log(`📁 Environment file: ${envFile}`);
-  console.log(`🌐 http://localhost:${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌐 Local: http://localhost:${PORT}`);
+  console.log(`🚀 Render URL: https://mysecretdiarypro.onrender.com`);
   console.log(`📝 API Endpoints:`);
-  console.log(`   - Auth: http://localhost:${PORT}/api/auth`);
-  console.log(`   - Diary: http://localhost:${PORT}/api/diary`);
-  console.log(`   - Upload Image: http://localhost:${PORT}/api/upload/image`);
-  console.log(`   - Upload Voice: http://localhost:${PORT}/api/upload/voice`);
-  console.log(`   - Test Env: http://localhost:${PORT}/api/test-env`);
-  console.log(`   - Test Email (GET): http://localhost:${PORT}/api/test-email?email=your@email.com`);
-  console.log(`   - Test Email (POST): http://localhost:${PORT}/api/test-email`);
+  console.log(`   - Auth: /api/auth`);
+  console.log(`   - Diary: /api/diary`);
+  console.log(`   - Upload Image: /api/upload/image`);
+  console.log(`   - Upload Voice: /api/upload/voice`);
+  console.log(`   - Test Env: /api/test-env`);
+  console.log(`   - Test Email: /api/test-email?email=your@email.com`);
   console.log(`☁️  Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME ? '✅ Configured' : '❌ Missing'}`);
   console.log(`📧 EmailJS Status:`);
   console.log(`   - Service ID: ${process.env.EMAILJS_SERVICE_ID ? '✅ ' + process.env.EMAILJS_SERVICE_ID : '❌ Missing'}`);
@@ -747,16 +771,7 @@ const server = app.listen(PORT, () => {
   
   if (process.env.EMAILJS_SERVICE_ID && process.env.EMAILJS_TEMPLATE_ID && process.env.EMAILJS_PUBLIC_KEY) {
     console.log(`\n✅ EmailJS is ready! Test it now:`);
-    console.log(`   GET:  http://localhost:${PORT}/api/test-email?email=your@email.com`);
-    console.log(`   POST: http://localhost:${PORT}/api/test-email (with JSON body {"email":"your@email.com"})`);
-  } else {
-    console.log(`\n⚠️  Warning: EmailJS is not fully configured. Password reset emails will not work!`);
-    console.log(`   Please add EmailJS keys to your ${envFile} file.`);
-    console.log(`   Required keys: EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY`);
-  }
-  
-  if (!process.env.MONGODB_URI) {
-    console.log(`\n❌ MongoDB URI is missing! Please check your environment variables.`);
+    console.log(`   GET:  https://mysecretdiarypro.onrender.com/api/test-email?email=your@email.com`);
   }
 });
 
@@ -764,5 +779,19 @@ server.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {
     console.error(`❌ Port ${PORT} is already in use.`);
     process.exit(1);
+  } else {
+    console.error('❌ Server error:', error);
   }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed');
+      process.exit(0);
+    });
+  });
 });

@@ -11,9 +11,9 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('token'));
 
-  // Create axios instance
+  // Create axios instance with your Render backend URL
   const api = axios.create({
-  baseURL: 'https://mysecretdiarypro.onrender.com/api',
+    baseURL: 'https://mysecretdiarypro.onrender.com/api',
     timeout: 10000,
   });
 
