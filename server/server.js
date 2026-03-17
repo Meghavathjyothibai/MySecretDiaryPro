@@ -205,12 +205,22 @@ app.get('/api/test-email', async (req, res) => {
   }
 });
 
-// ===== MongoDB Connection with retry logic =====
+// ===== DEBUG EMAILJS ROUTE =====
+app.get('/api/debug-emailjs', (req, res) => {
+  res.json({
+    service_id: process.env.EMAILJS_SERVICE_ID || '❌ NOT SET',
+    template_id: process.env.EMAILJS_TEMPLATE_ID || '❌ NOT SET',
+    public_key: process.env.EMAILJS_PUBLIC_KEY ? '✅ SET' : '❌ NOT SET',
+    private_key: process.env.EMAILJS_PRIVATE_KEY ? '✅ SET' : '❌ NOT SET',
+    node_env: process.env.NODE_ENV
+  });
+});
+
+// ===== MongoDB Connection =====
 const connectDB = async () => {
   try {
     if (!process.env.MONGODB_URI) {
-      console.error('❌ MONGODB_URI is not defined in environment variables');
-      console.error('📌 Please check your .env.local or Render environment variables');
+      console.error('❌ MONGODB_URI is not defined');
       return;
     }
 
@@ -218,18 +228,17 @@ const connectDB = async () => {
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
     });
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
     console.error('❌ MongoDB connection failed:', error.message);
-    // Retry connection after 5 seconds
     setTimeout(connectDB, 5000);
   }
 };
 
 connectDB();
+
+
 
 // Import models
 const User = require('./models/User');
